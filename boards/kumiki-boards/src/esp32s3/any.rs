@@ -16,8 +16,8 @@ use kumiki_bmi270::Bmi270;
 use kumiki_mpu6886::Mpu6886;
 
 use super::{
-    AtomS3AsyncDisplay, AtomS3Display, CoreS3AsyncDisplay, CoreS3Display, I2cBus, SharedI2c, StopWatchAsyncDisplay,
-    StopWatchDisplay, chips,
+    Co5300AsyncDisplay, Co5300Display, Gc9107AsyncDisplay, Gc9107Display, Ili9342cAsyncDisplay, Ili9342cDisplay, SharedI2c,
+    chips,
 };
 
 /// Display of any board in the family.
@@ -25,12 +25,12 @@ use super::{
 /// Call [`AnyDisplay::flush`] after drawing a frame: frame-buffered displays
 /// (StopWatch) send the changed area then; direct ones do nothing.
 pub enum AnyDisplay {
-    /// CoreS3: ILI9342C 320×240.
-    CoreS3(CoreS3Display),
-    /// AtomS3: GC9107 128×128.
-    AtomS3(AtomS3Display),
-    /// StopWatch: CO5300 468×468 (466 visible, round), frame-buffered in PSRAM.
-    StopWatch(StopWatchDisplay),
+    /// ILI9342C 320×240 (CoreS3).
+    Ili9342c(Ili9342cDisplay),
+    /// GC9107 128×128 (AtomS3).
+    Gc9107(Gc9107Display),
+    /// CO5300 round AMOLED, frame-buffered in PSRAM (StopWatch).
+    Co5300(Co5300Display),
 }
 
 /// Drawing into a RAM frame buffer cannot fail.
@@ -41,9 +41,9 @@ fn infallible<T>(r: Result<T, core::convert::Infallible>) -> Result<T, BusError>
 impl OriginDimensions for AnyDisplay {
     fn size(&self) -> Size {
         match self {
-            AnyDisplay::CoreS3(d) => d.size(),
-            AnyDisplay::AtomS3(d) => d.size(),
-            AnyDisplay::StopWatch(d) => d.size(),
+            AnyDisplay::Ili9342c(d) => d.size(),
+            AnyDisplay::Gc9107(d) => d.size(),
+            AnyDisplay::Co5300(d) => d.size(),
         }
     }
 }
@@ -54,30 +54,30 @@ impl DrawTarget for AnyDisplay {
 
     fn draw_iter<I: IntoIterator<Item = Pixel<Rgb565>>>(&mut self, pixels: I) -> Result<(), BusError> {
         match self {
-            AnyDisplay::CoreS3(d) => d.draw_iter(pixels),
-            AnyDisplay::AtomS3(d) => d.draw_iter(pixels),
-            AnyDisplay::StopWatch(d) => infallible(d.draw_iter(pixels)),
+            AnyDisplay::Ili9342c(d) => d.draw_iter(pixels),
+            AnyDisplay::Gc9107(d) => d.draw_iter(pixels),
+            AnyDisplay::Co5300(d) => infallible(d.draw_iter(pixels)),
         }
     }
     fn fill_contiguous<I: IntoIterator<Item = Rgb565>>(&mut self, area: &Rectangle, colors: I) -> Result<(), BusError> {
         match self {
-            AnyDisplay::CoreS3(d) => d.fill_contiguous(area, colors),
-            AnyDisplay::AtomS3(d) => d.fill_contiguous(area, colors),
-            AnyDisplay::StopWatch(d) => infallible(d.fill_contiguous(area, colors)),
+            AnyDisplay::Ili9342c(d) => d.fill_contiguous(area, colors),
+            AnyDisplay::Gc9107(d) => d.fill_contiguous(area, colors),
+            AnyDisplay::Co5300(d) => infallible(d.fill_contiguous(area, colors)),
         }
     }
     fn fill_solid(&mut self, area: &Rectangle, color: Rgb565) -> Result<(), BusError> {
         match self {
-            AnyDisplay::CoreS3(d) => d.fill_solid(area, color),
-            AnyDisplay::AtomS3(d) => d.fill_solid(area, color),
-            AnyDisplay::StopWatch(d) => infallible(d.fill_solid(area, color)),
+            AnyDisplay::Ili9342c(d) => d.fill_solid(area, color),
+            AnyDisplay::Gc9107(d) => d.fill_solid(area, color),
+            AnyDisplay::Co5300(d) => infallible(d.fill_solid(area, color)),
         }
     }
     fn clear(&mut self, color: Rgb565) -> Result<(), BusError> {
         match self {
-            AnyDisplay::CoreS3(d) => d.clear(color),
-            AnyDisplay::AtomS3(d) => d.clear(color),
-            AnyDisplay::StopWatch(d) => infallible(d.clear(color)),
+            AnyDisplay::Ili9342c(d) => d.clear(color),
+            AnyDisplay::Gc9107(d) => d.clear(color),
+            AnyDisplay::Co5300(d) => infallible(d.clear(color)),
         }
     }
 }
@@ -86,16 +86,16 @@ impl FastDraw for AnyDisplay {
     type Format = Rgb565Be;
     fn fill_rect(&mut self, area: &Rectangle, color: Rgb565) -> Result<(), BusError> {
         match self {
-            AnyDisplay::CoreS3(d) => d.fill_rect(area, color),
-            AnyDisplay::AtomS3(d) => d.fill_rect(area, color),
-            AnyDisplay::StopWatch(d) => infallible(d.fill_rect(area, color)),
+            AnyDisplay::Ili9342c(d) => d.fill_rect(area, color),
+            AnyDisplay::Gc9107(d) => d.fill_rect(area, color),
+            AnyDisplay::Co5300(d) => infallible(d.fill_rect(area, color)),
         }
     }
     fn blit<S: PixelFormat>(&mut self, area: &Rectangle, src: &[u8], stride_px: usize) -> Result<(), BusError> {
         match self {
-            AnyDisplay::CoreS3(d) => d.blit::<S>(area, src, stride_px),
-            AnyDisplay::AtomS3(d) => d.blit::<S>(area, src, stride_px),
-            AnyDisplay::StopWatch(d) => infallible(d.blit::<S>(area, src, stride_px)),
+            AnyDisplay::Ili9342c(d) => d.blit::<S>(area, src, stride_px),
+            AnyDisplay::Gc9107(d) => d.blit::<S>(area, src, stride_px),
+            AnyDisplay::Co5300(d) => infallible(d.blit::<S>(area, src, stride_px)),
         }
     }
 }
@@ -107,7 +107,7 @@ impl AnyDisplay {
     /// Draw rectangular layouts through `kumiki_gfx::Viewport::new(&mut display, safe_area)`.
     pub fn safe_area(&self) -> Rectangle {
         match self {
-            AnyDisplay::StopWatch(d) => {
+            AnyDisplay::Co5300(d) => {
                 let s = d.size();
                 let (cx, cy) = (s.width as i32 / 2, s.height as i32 / 2);
                 // DT `kumiki,round-diameter`; side = d / √2, rounded down to even.
@@ -125,7 +125,7 @@ impl AnyDisplay {
     /// Send pending changes (frame-buffered displays); no-op for direct ones.
     pub fn flush(&mut self) -> Result<(), BusError> {
         match self {
-            AnyDisplay::StopWatch(d) => d.flush(),
+            AnyDisplay::Co5300(d) => d.flush(),
             _ => Ok(()),
         }
     }
@@ -136,10 +136,10 @@ impl AnyDisplay {
     /// released; push even-aligned areas (e.g. whole frames).
     pub fn into_async(self) -> AnyAsyncDisplay {
         match self {
-            AnyDisplay::CoreS3(d) => AnyAsyncDisplay::CoreS3(d.map_panel(|p| p.map_bus(|b| b.into_async()))),
-            AnyDisplay::AtomS3(d) => AnyAsyncDisplay::AtomS3(d.map_panel(|p| p.map_bus(|b| b.into_async()))),
-            AnyDisplay::StopWatch(d) => {
-                AnyAsyncDisplay::StopWatch(d.into_target().map_panel(|p| p.map_bus(|b| b.into_async())))
+            AnyDisplay::Ili9342c(d) => AnyAsyncDisplay::Ili9342c(d.map_panel(|p| p.map_bus(|b| b.into_async()))),
+            AnyDisplay::Gc9107(d) => AnyAsyncDisplay::Gc9107(d.map_panel(|p| p.map_bus(|b| b.into_async()))),
+            AnyDisplay::Co5300(d) => {
+                AnyAsyncDisplay::Co5300(d.into_target().map_panel(|p| p.map_bus(|b| b.into_async())))
             }
         }
     }
@@ -147,12 +147,12 @@ impl AnyDisplay {
 
 /// `async` display of any board in the family.
 pub enum AnyAsyncDisplay {
-    /// CoreS3: ILI9342C 320×240.
-    CoreS3(CoreS3AsyncDisplay),
-    /// AtomS3: GC9107 128×128.
-    AtomS3(AtomS3AsyncDisplay),
-    /// StopWatch: CO5300 468×468 (x / width must be even).
-    StopWatch(StopWatchAsyncDisplay),
+    /// ILI9342C 320×240 (CoreS3).
+    Ili9342c(Ili9342cAsyncDisplay),
+    /// GC9107 128×128 (AtomS3).
+    Gc9107(Gc9107AsyncDisplay),
+    /// CO5300 (StopWatch; x / width must be even).
+    Co5300(Co5300AsyncDisplay),
 }
 
 impl AsyncFastDraw for AnyAsyncDisplay {
@@ -161,25 +161,25 @@ impl AsyncFastDraw for AnyAsyncDisplay {
 
     fn size(&self) -> Size {
         match self {
-            AnyAsyncDisplay::CoreS3(d) => AsyncFastDraw::size(d),
-            AnyAsyncDisplay::AtomS3(d) => AsyncFastDraw::size(d),
-            AnyAsyncDisplay::StopWatch(d) => AsyncFastDraw::size(d),
+            AnyAsyncDisplay::Ili9342c(d) => AsyncFastDraw::size(d),
+            AnyAsyncDisplay::Gc9107(d) => AsyncFastDraw::size(d),
+            AnyAsyncDisplay::Co5300(d) => AsyncFastDraw::size(d),
         }
     }
 
     async fn fill_rect(&mut self, area: &Rectangle, color: Rgb565) -> Result<(), BusError> {
         match self {
-            AnyAsyncDisplay::CoreS3(d) => AsyncFastDraw::fill_rect(d, area, color).await,
-            AnyAsyncDisplay::AtomS3(d) => AsyncFastDraw::fill_rect(d, area, color).await,
-            AnyAsyncDisplay::StopWatch(d) => AsyncFastDraw::fill_rect(d, area, color).await,
+            AnyAsyncDisplay::Ili9342c(d) => AsyncFastDraw::fill_rect(d, area, color).await,
+            AnyAsyncDisplay::Gc9107(d) => AsyncFastDraw::fill_rect(d, area, color).await,
+            AnyAsyncDisplay::Co5300(d) => AsyncFastDraw::fill_rect(d, area, color).await,
         }
     }
 
     async fn blit<S: PixelFormat>(&mut self, area: &Rectangle, src: &[u8], stride_px: usize) -> Result<(), BusError> {
         match self {
-            AnyAsyncDisplay::CoreS3(d) => AsyncFastDraw::blit::<S>(d, area, src, stride_px).await,
-            AnyAsyncDisplay::AtomS3(d) => AsyncFastDraw::blit::<S>(d, area, src, stride_px).await,
-            AnyAsyncDisplay::StopWatch(d) => AsyncFastDraw::blit::<S>(d, area, src, stride_px).await,
+            AnyAsyncDisplay::Ili9342c(d) => AsyncFastDraw::blit::<S>(d, area, src, stride_px).await,
+            AnyAsyncDisplay::Gc9107(d) => AsyncFastDraw::blit::<S>(d, area, src, stride_px).await,
+            AnyAsyncDisplay::Co5300(d) => AsyncFastDraw::blit::<S>(d, area, src, stride_px).await,
         }
     }
 }
@@ -252,7 +252,7 @@ impl Touch for AnyTouch {
 /// IMU of any board in the family.
 pub enum AnyImu {
     /// MPU-6886 (AtomS3).
-    Mpu6886(Mpu6886<I2cBus>),
+    Mpu6886(Mpu6886<SharedI2c>),
     /// BMI270 on the shared internal bus (CoreS3).
     Bmi270(Bmi270<SharedI2c>),
 }
@@ -275,14 +275,14 @@ impl Imu for AnyImu {
     type Error = AnyError;
     fn accel(&mut self) -> Result<Vec3, AnyError> {
         let [x, y, z] = match self {
-            AnyImu::Mpu6886(m) => Mpu6886::<I2cBus>::accel_g(m.accel_raw().map_err(mpu_err)?),
+            AnyImu::Mpu6886(m) => Mpu6886::<SharedI2c>::accel_g(m.accel_raw().map_err(mpu_err)?),
             AnyImu::Bmi270(m) => Bmi270::<SharedI2c>::accel_g(m.accel_raw().map_err(bmi_err)?),
         };
         Ok(Vec3 { x, y, z })
     }
     fn gyro(&mut self) -> Result<Vec3, AnyError> {
         let [x, y, z] = match self {
-            AnyImu::Mpu6886(m) => Mpu6886::<I2cBus>::gyro_dps(m.gyro_raw().map_err(mpu_err)?),
+            AnyImu::Mpu6886(m) => Mpu6886::<SharedI2c>::gyro_dps(m.gyro_raw().map_err(mpu_err)?),
             AnyImu::Bmi270(m) => Bmi270::<SharedI2c>::gyro_dps(m.gyro_raw().map_err(bmi_err)?),
         };
         Ok(Vec3 { x, y, z })

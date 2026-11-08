@@ -35,6 +35,15 @@
 		};
 	};
 
+	/* Glue: the M5PM1 / M5IOE1 register sequence that powers and resets the
+	 * panel and touch controller (port of M5GFX pmic_ops::stopwatch_power_on). */
+	power_seq: power-sequence {
+		compatible = "m5stack,stopwatch-power-sequence";
+		pmic = <&pm1>;
+		io-expander = <&ioe1>;
+		hold-cs = <&spi2>; /* keep the panel CS high while powering up */
+	};
+
 	kumiki,detect {
 		compatible = "kumiki,board-detect";
 		pmic-ack {
@@ -71,6 +80,7 @@
 		reg = <0x15>;
 		status = "fail-needs-probe";
 		kumiki,probe-group = "touch";
+		kumiki,depends-on = <&power_seq>; /* reset is released by the IO expander */
 		/* Measured on a real unit (3-point fit, 2026-11-08). */
 		touchscreen-min-x = <(-29)>;
 		touchscreen-min-y = <(-40)>;
@@ -83,11 +93,13 @@
 		reg = <0x5a>;
 		status = "fail-needs-probe";
 		kumiki,probe-group = "touch";
+		kumiki,depends-on = <&power_seq>;
 	};
 
 	imu: imu@68 {
 		compatible = "bosch,bmi270";
 		reg = <0x68>;
+		kumiki,depends-on = <&power_seq>; /* sensor rails come up with the PMIC sequence */
 	};
 };
 
@@ -101,7 +113,7 @@
 		compatible = "chipone,co5300";
 		reg = <0>;
 		spi-max-frequency = <40000000>;
-		kumiki,depends-on = <&ioe1>; /* panel power and reset come from the IO expander */
+		kumiki,depends-on = <&power_seq>; /* panel power and reset come from the IO expander */
 		backlight = <&lcd_backlight>;
 		width = <468>;
 		height = <468>;

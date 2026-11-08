@@ -98,6 +98,21 @@ pub struct KumikiMeta {
     /// Properties of child nodes (e.g. gpio-keys entries): name → type.
     #[serde(default, rename = "child-props")]
     pub child_props: BTreeMap<String, PropType>,
+    /// Bring-up expression template (backend-specific placeholders).
+    #[serde(default)]
+    pub init: Option<String>,
+    /// Presence test for `status = "fail-needs-probe"` candidates.
+    #[serde(default)]
+    pub probe: Option<String>,
+    /// `OutputPin` expression for one line of this gpio-controller (`${line}`).
+    #[serde(default, rename = "gpio-pin")]
+    pub gpio_pin: Option<String>,
+    /// Driver model type substituted for `${model}`.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// `Any*` enum variant substituted for `${variant}`.
+    #[serde(default)]
+    pub variant: Option<String>,
 }
 
 /// One binding.
@@ -337,8 +352,8 @@ pub fn validate(board: &Board, bindings: &Bindings) -> Vec<String> {
         // GPIOs: chip pins must exist and be used once.
         let mut gpio_props: Vec<(String, &kumiki_dt::Property)> =
             n.props.iter().filter(|p| p.name == "gpios" || p.name.ends_with("-gpios")).map(|p| (p.name.clone(), p)).collect();
-        // gpio-keys style child entries
-        for c in &n.children {
+        // gpio-keys style child entries (gpio-hog children use controller-local specifiers)
+        for c in n.children.iter().filter(|c| !c.has("gpio-hog")) {
             for p in c.props.iter().filter(|p| p.name == "gpios") {
                 gpio_props.push((format!("{}/gpios", c.name), p));
             }
@@ -376,7 +391,20 @@ pub fn chip_gpio_count(tree: &Tree) -> u32 {
     n
 }
 
-/// Every chip GPIO the board uses, with the property it comes from.
+/// Name of the `Pins` field for entry `index` of GPIO property `prop` of the
+/// node at `path` (child entries such as gpio-keys use `"<child>-gpios"`).
+/// Single-entry properties get no index suffix.
+pub fn pin_field(tree: &Tree, path: &str, prop: &str, index: usize, entries: usize) -> String {
+    let label = label_of(tree, path);
+    let base = prop.trim_end_matches("-gpios").trim_end_matches("gpios").replace('-', "_");
+    match (base.is_empty(), entries) {
+        (true, _) => label,
+        (false, 1) => format!("{label}_{base}"),
+        (false, _) => format!("{label}_{base}{index}"),
+    }
+}
+
+/// Every chip GPIO the board uses, with its `Pins` field name.
 pub fn chip_pins(board: &Board) -> Vec<(String, u32)> {
     let tree = &board.tree;
     let mut out = Vec::new();
@@ -390,22 +418,17 @@ pub fn chip_pins(board: &Board) -> Vec<(String, u32)> {
             .filter(|p| p.name == "gpios" || p.name.ends_with("-gpios"))
             .map(|p| (p.name.clone(), p))
             .collect();
-        for c in &n.children {
+        for c in n.children.iter().filter(|c| !c.has("gpio-hog")) {
             for p in c.props.iter().filter(|p| p.name == "gpios") {
                 props.push((format!("{}-gpios", c.name), p));
             }
         }
         for (pname, p) in props {
-            for (i, g) in gpios(tree, p).unwrap_or_default().into_iter().enumerate() {
+            let list = gpios(tree, p).unwrap_or_default();
+            let n_entries = list.len();
+            for (i, g) in list.into_iter().enumerate() {
                 if let Gpio::Chip { pin, .. } = g {
-                    let label = label_of(tree, path);
-                    let base = pname.trim_end_matches("-gpios").trim_end_matches("gpios").replace('-', "_");
-                    let field = match (base.is_empty(), i) {
-                        (true, _) => label,
-                        (false, 0) if p.cells().len() <= 3 => format!("{label}_{base}"),
-                        (false, _) => format!("{label}_{base}{i}"),
-                    };
-                    out.push((field, pin));
+                    out.push((pin_field(tree, path, &pname, i, n_entries), pin));
                 }
             }
         }

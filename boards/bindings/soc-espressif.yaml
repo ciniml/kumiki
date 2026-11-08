@@ -1,6 +1,12 @@
 # Espressif SoC controller bindings (chip layer).
 # Property types: int (u32), sint (i32), boolean, string, string-array,
 # array (u32 list), uint8-array, phandle, phandle-array, gpios.
+#
+# `kumiki.init` is a Rust expression emitted by kumiki-dtgen (esp32s3
+# backend) with placeholders: ${pin:P} ${pinref:P} ${const:P} ${instance}
+# ${bus} ${busof:P} ${reset} ${lines} ${regulators} ${dcs_config}
+# ${touchmap} ${keypin:K} ${optkeypin:K} ${spihost}; a `parent.` or `@PROP.`
+# prefix on the argument selects the parent node or a phandle target.
 
 - compatible: "simple-bus"
   properties:
@@ -17,6 +23,19 @@
 - compatible: "espressif,esp32-i2c"
   kumiki:
     controller: i2c
+    # A shared (single-core) bus: devices get `RefCellDevice::new(${bus})`.
+    init: |
+      {
+          if ${const:BUS_RECOVERY} {
+              probe::i2c_bus_recover(${pinref:scl-gpios}, ${pinref:sda-gpios});
+          }
+          static CELL: StaticCell<RefCell<I2cBus>> = StaticCell::new();
+          let i2c = I2c::new(${instance}, I2cConfig::default().with_frequency(bind::hz(${const:CLOCK_FREQUENCY}, 100_000)))
+              .map_err(|_| InitError::Config)?
+              .with_sda(${pin:sda-gpios})
+              .with_scl(${pin:scl-gpios});
+          &*CELL.init(RefCell::new(i2c))
+      }
   properties:
     reg: { type: array }
     kumiki,instance: { type: string, required: true }
@@ -28,6 +47,8 @@
 - compatible: "espressif,esp32-spi"
   kumiki:
     controller: spi
+    # The device on the bus builds the SPI master (its bus flavour differs).
+    init: "()"
   properties:
     reg: { type: array }
     kumiki,instance: { type: string, required: true }

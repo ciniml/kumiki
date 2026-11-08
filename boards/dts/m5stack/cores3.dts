@@ -57,11 +57,14 @@
 	pmic: pmic@34 {
 		compatible = "x-powers,axp2101";
 		reg = <0x34>;
+		/* As M5Unified board_M5StackCoreS3: ALDO1 AW88298, ALDO2 ES7210, ALDO3 camera/LCD, ALDO4 TF card. */
 		regulators {
-			aldo1: ALDO1 { regulator-min-microvolt = <1800000>; regulator-max-microvolt = <1800000>; };
-			aldo2: ALDO2 { regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; };
-			aldo3: ALDO3 { regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; };
-			aldo4: ALDO4 { regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; };
+			aldo1: ALDO1 { regulator-min-microvolt = <1800000>; regulator-max-microvolt = <1800000>; regulator-boot-on; };
+			aldo2: ALDO2 { regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; regulator-boot-on; };
+			aldo3: ALDO3 { regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; regulator-boot-on; };
+			aldo4: ALDO4 { regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; regulator-boot-on; };
+			bldo1: BLDO1 { regulator-boot-on; };
+			bldo2: BLDO2 { regulator-boot-on; };
 			dldo1: DLDO1 { regulator-name = "lcd-backlight"; };
 		};
 	};
@@ -71,6 +74,20 @@
 		reg = <0x58>;
 		gpio-controller;
 		#gpio-cells = <2>;
+		kumiki,p0-push-pull;
+		/* Line states as set by M5GFX / M5Unified for CoreS3 (P0_n = n, P1_n = 8 + n).
+		 * Line 13 (P1_5) is the LCD reset, driven by the panel via reset-gpios. */
+		touch-reset-hog { gpio-hog; gpios = <0 GPIO_ACTIVE_HIGH>; output-high; line-name = "TOUCH_RST"; };
+		p0-1-hog { gpio-hog; gpios = <1 GPIO_ACTIVE_HIGH>; output-high; };
+		amp-reset-hog { gpio-hog; gpios = <2 GPIO_ACTIVE_HIGH>; output-high; line-name = "AW88298_RST"; };
+		p0-5-hog { gpio-hog; gpios = <5 GPIO_ACTIVE_HIGH>; output-low; };
+		p0-6-hog { gpio-hog; gpios = <6 GPIO_ACTIVE_HIGH>; output-low; };
+		p0-7-hog { gpio-hog; gpios = <7 GPIO_ACTIVE_HIGH>; output-low; };
+		camera-reset-hog { gpio-hog; gpios = <8 GPIO_ACTIVE_HIGH>; output-high; line-name = "CAM_RST"; };
+		p1-1-hog { gpio-hog; gpios = <9 GPIO_ACTIVE_HIGH>; output-high; };
+		p1-4-hog { gpio-hog; gpios = <12 GPIO_ACTIVE_HIGH>; output-low; };
+		p1-6-hog { gpio-hog; gpios = <14 GPIO_ACTIVE_HIGH>; output-low; };
+		boost-enable-hog { gpio-hog; gpios = <15 GPIO_ACTIVE_HIGH>; output-low; line-name = "BOOST_EN"; };
 	};
 
 	touch: touchscreen@38 {

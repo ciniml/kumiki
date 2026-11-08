@@ -43,6 +43,30 @@ impl DetectLog {
     }
 }
 
+mod prelude {
+    pub use core::cell::RefCell;
+    pub use embedded_graphics_core::{draw_target::DrawTarget, geometry::Size, pixelcolor::{Rgb565, RgbColor}};
+    pub use embedded_hal_bus::i2c::RefCellDevice;
+    pub use esp_hal::{
+        delay::Delay,
+        dma::DmaTxBuf,
+        gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
+        i2c::master::{Config as I2cConfig, I2c},
+        peripherals::Peripherals,
+        spi::{Mode, master::{Config as SpiConfig, Spi}},
+        time::Rate,
+    };
+    pub use kumiki_gfx::Display;
+    pub use kumiki_gfx_bus_esp::{EspQspiDmaBus, EspSpiDmaBus, SpiHost};
+    pub use kumiki_gfx_panels::{DcsPanel, Model, NoPin};
+    pub use kumiki_mpu6886::Mpu6886;
+    pub use static_cell::StaticCell;
+    pub use super::super::{
+        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
+        Spare,
+    };
+}
+
 /// Boards of this family, in detection order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BoardId {
@@ -180,6 +204,9 @@ macro_rules! take_pins_stopwatch {
 
 /// M5Stack CoreS3 (`m5stack,cores3`), from `boards/dts/m5stack/cores3.dts`.
 pub mod cores3 {
+    #[allow(unused_imports)]
+    use super::prelude::*;
+
     pub const NAME: &str = "M5Stack CoreS3";
     pub const COMPATIBLE: &str = "m5stack,cores3";
     /// Detection candidate (no `board-*` feature, or `board-m5stack-cores3`).
@@ -225,6 +252,8 @@ pub mod cores3 {
         #[allow(unused_imports)]
         use super::super::Gpio;
         pub const COMPATIBLE: &str = "awinic,aw9523b";
+        /// port 0 push-pull (GCR bit 4)
+        pub const P0_PUSH_PULL: bool = true;
         pub const ADDR: u8 = 0x58;
     }
     /// `/soc/i2c@60013000/touchscreen@38` (focaltech,ft6336u).
@@ -301,10 +330,89 @@ pub mod cores3 {
         pub const COMPATIBLE: &str = "kumiki,touch-keys";
         pub const TOUCH: &str = "touch";
     }
+
+    /// Bring the board up in `INIT_ORDER` (generated from the binding templates).
+    #[inline(never)]
+    #[allow(unused_variables, unused_mut, unused_braces, clippy::let_unit_value)]
+    pub fn init(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devices, InitError> {
+        let mut pins = take_pins_cores3!(p);
+        let spare = take_spare!(p);
+        let mut delay = Delay::new();
+        // /soc/i2c@60013000 (espressif,esp32-i2c)
+        let i2c0 = {
+            if i2c0::BUS_RECOVERY {
+                probe::i2c_bus_recover(pins.i2c0_scl.reborrow(), pins.i2c0_sda.reborrow());
+            }
+            static CELL: StaticCell<RefCell<I2cBus>> = StaticCell::new();
+            let i2c = I2c::new(p.I2C0, I2cConfig::default().with_frequency(bind::hz(i2c0::CLOCK_FREQUENCY, 100_000)))
+                .map_err(|_| InitError::Config)?
+                .with_sda(pins.i2c0_sda)
+                .with_scl(pins.i2c0_scl);
+            &*CELL.init(RefCell::new(i2c))
+        };
+        // /soc/i2c@60013000/pmic@34 (x-powers,axp2101)
+        let pmic = {
+            chips::axp2101_init(&mut RefCellDevice::new(i2c0), pmic::ADDR, &[(chips::AxpLdo::Aldo1, 1800), (chips::AxpLdo::Aldo2, 3300), (chips::AxpLdo::Aldo3, 3300), (chips::AxpLdo::Aldo4, 3300), (chips::AxpLdo::Bldo1, 0), (chips::AxpLdo::Bldo2, 0)]).map_err(InitError::I2c)?;
+            delay.delay_millis(10);
+            AnyPower::Axp2101(chips::Axp2101Power(RefCellDevice::new(i2c0)))
+        };
+        // /soc/i2c@60013000/gpio@58 (awinic,aw9523b)
+        let ioexp = chips::aw9523_init(&mut RefCellDevice::new(i2c0), ioexp::ADDR, ioexp::P0_PUSH_PULL, &[(0, chips::LineInit::OutputHigh), (1, chips::LineInit::OutputHigh), (2, chips::LineInit::OutputHigh), (5, chips::LineInit::OutputLow), (6, chips::LineInit::OutputLow), (7, chips::LineInit::OutputLow), (8, chips::LineInit::OutputHigh), (9, chips::LineInit::OutputHigh), (12, chips::LineInit::OutputLow), (13, chips::LineInit::OutputHigh), (14, chips::LineInit::OutputLow), (15, chips::LineInit::OutputLow)]).map_err(InitError::I2c)?;
+        // /soc/i2c@60013000/touchscreen@38 (focaltech,ft6336u)
+        let touch = AnyTouch::Ft6336(chips::Ft6336 { i2c: RefCellDevice::new(i2c0) });
+        // /soc/i2c@60013000/imu@69 (bosch,bmi270)
+        let imu = {
+            let mut m = kumiki_bmi270::Bmi270::new(RefCellDevice::new(i2c0), imu::ADDR);
+            m.init(&mut delay).ok().map(|_| AnyImu::Bmi270(m))
+        };
+        // /soc/i2c@60013000/rtc@51 (belling,bm8563)
+        let rtc = ();
+        // /soc/spi@60024000 (espressif,esp32-spi)
+        let spi2 = ();
+        // /soc/spi@60024000/display@0 (ilitek,ili9342c)
+        let lcd = {
+            bind::reset_pulse(&mut chips::Aw9523Pin { i2c: RefCellDevice::new(i2c0), addr: ioexp::ADDR, line: 13 }, &mut delay);
+            let spi = Spi::new(p.SPI2, SpiConfig::default().with_frequency(Rate::from_hz(lcd::SPI_MAX_FREQUENCY)).with_mode(Mode::_0))
+                .map_err(|_| InitError::Config)?
+                .with_sck(pins.spi2_sck)
+                .with_mosi(pins.spi2_mosi)
+                .with_dma(p.DMA_CH0);
+            let dc = Output::new(pins.lcd_dc, Level::High, OutputConfig::default());
+            let cs = Output::new(pins.spi2_cs, Level::High, OutputConfig::default());
+            let bus = EspSpiDmaBus::new(spi, dc, Some(cs), buf_a, buf_b).with_fifo(SpiHost::Spi2);
+            let mut panel = DcsPanel::new(bus, kumiki_gfx_panels::Ili9342c, bind::dcs_config(lcd::WIDTH, lcd::HEIGHT, lcd::OFFSET, lcd::INVERT, lcd::RGB_ORDER), None::<NoPin>);
+            panel.init(&mut delay).map_err(|_| InitError::Display)?;
+            let mut d = Display::new(panel);
+            DrawTarget::clear(&mut d, Rgb565::BLACK).map_err(|_| InitError::Display)?;
+            AnyDisplay::Ili9342c(d)
+        };
+        // /backlight (kumiki,regulator-backlight)
+        let lcd_backlight = {
+            let mut b = AnyBacklight::Axp2101(chips::Axp2101Backlight(RefCellDevice::new(i2c0)));
+            kumiki_class::Backlight::set_brightness(&mut b, lcd_backlight::DEFAULT_BRIGHTNESS.unwrap_or(160).min(255) as u8)
+                .map_err(|_| InitError::Display)?;
+            b
+        };
+        // /buttons (kumiki,touch-keys)
+        let buttons = ButtonInputs::TouchAsA;
+        Ok(Devices {
+            board: super::BoardId::M5StackCoreS3,
+            display: lcd,
+            backlight: lcd_backlight,
+            touch: Some(touch),
+            imu: imu,
+            power: Some(pmic),
+            buttons: buttons,
+            spare,
+        })
+    }
 }
 
 /// M5Stack AtomS3 (`m5stack,atoms3`), from `boards/dts/m5stack/atoms3.dts`.
 pub mod atoms3 {
+    #[allow(unused_imports)]
+    use super::prelude::*;
+
     pub const NAME: &str = "M5Stack AtomS3";
     pub const COMPATIBLE: &str = "m5stack,atoms3";
     /// Detection candidate (no `board-*` feature, or `board-m5stack-atoms3`).
@@ -399,10 +507,72 @@ pub mod atoms3 {
         /// (button, GPIO) entries.
         pub const KEYS: &[(&str, Gpio)] = &[("a", Gpio::Chip { pin: 41, active_low: true })];
     }
+
+    /// Bring the board up in `INIT_ORDER` (generated from the binding templates).
+    #[inline(never)]
+    #[allow(unused_variables, unused_mut, unused_braces, clippy::let_unit_value)]
+    pub fn init(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devices, InitError> {
+        let mut pins = take_pins_atoms3!(p);
+        let spare = take_spare!(p);
+        let mut delay = Delay::new();
+        // /soc/i2c@60027000 (espressif,esp32-i2c)
+        let i2c1 = {
+            if i2c1::BUS_RECOVERY {
+                probe::i2c_bus_recover(pins.i2c1_scl.reborrow(), pins.i2c1_sda.reborrow());
+            }
+            static CELL: StaticCell<RefCell<I2cBus>> = StaticCell::new();
+            let i2c = I2c::new(p.I2C1, I2cConfig::default().with_frequency(bind::hz(i2c1::CLOCK_FREQUENCY, 100_000)))
+                .map_err(|_| InitError::Config)?
+                .with_sda(pins.i2c1_sda)
+                .with_scl(pins.i2c1_scl);
+            &*CELL.init(RefCell::new(i2c))
+        };
+        // /soc/i2c@60027000/imu@68 (tdk,mpu6886)
+        let imu = {
+            let mut m = Mpu6886::new(RefCellDevice::new(i2c1), imu::ADDR);
+            m.init(&mut delay).ok().map(|_| AnyImu::Mpu6886(m))
+        };
+        // /soc/spi@60024000 (espressif,esp32-spi)
+        let spi2 = ();
+        // /soc/spi@60024000/display@0 (galaxycore,gc9107)
+        let lcd = {
+            { let mut rst = Output::new(pins.lcd_reset, Level::High, OutputConfig::default()); bind::reset_pulse(&mut rst, &mut delay); core::mem::forget(rst); }
+            let spi = Spi::new(p.SPI2, SpiConfig::default().with_frequency(Rate::from_hz(lcd::SPI_MAX_FREQUENCY)).with_mode(Mode::_0))
+                .map_err(|_| InitError::Config)?
+                .with_sck(pins.spi2_sck)
+                .with_mosi(pins.spi2_mosi)
+                .with_dma(p.DMA_CH0);
+            let dc = Output::new(pins.lcd_dc, Level::High, OutputConfig::default());
+            let cs = Output::new(pins.spi2_cs, Level::High, OutputConfig::default());
+            let bus = EspSpiDmaBus::new(spi, dc, Some(cs), buf_a, buf_b).with_fifo(SpiHost::Spi2);
+            let mut panel = DcsPanel::new(bus, kumiki_gfx_panels::Gc9107, bind::dcs_config(lcd::WIDTH, lcd::HEIGHT, lcd::OFFSET, lcd::INVERT, lcd::RGB_ORDER), None::<NoPin>);
+            panel.init(&mut delay).map_err(|_| InitError::Display)?;
+            let mut d = Display::new(panel);
+            DrawTarget::clear(&mut d, Rgb565::BLACK).map_err(|_| InitError::Display)?;
+            AnyDisplay::Gc9107(d)
+        };
+        // /backlight (gpio-backlight)
+        let lcd_backlight = AnyBacklight::Gpio(Output::new(pins.lcd_backlight, Level::High, OutputConfig::default()));
+        // /buttons (gpio-keys)
+        let buttons = ButtonInputs::Gpio { a: Input::new(pins.buttons_button_a, InputConfig::default().with_pull(Pull::Up)), b: None };
+        Ok(Devices {
+            board: super::BoardId::M5StackAtomS3,
+            display: lcd,
+            backlight: lcd_backlight,
+            touch: None,
+            imu: imu,
+            power: None,
+            buttons: buttons,
+            spare,
+        })
+    }
 }
 
 /// M5Stack StopWatch (`m5stack,stopwatch`), from `boards/dts/m5stack/stopwatch.dts`.
 pub mod stopwatch {
+    #[allow(unused_imports)]
+    use super::prelude::*;
+
     pub const NAME: &str = "M5Stack StopWatch";
     pub const COMPATIBLE: &str = "m5stack,stopwatch";
     /// Detection candidate (no `board-*` feature, or `board-m5stack-stopwatch`).
@@ -412,7 +582,7 @@ pub mod stopwatch {
     /// Needs PSRAM (a frame buffer lives there).
     pub const NEEDS_PSRAM: bool = true;
     /// Device bring-up order (dependency graph of the device tree).
-    pub const INIT_ORDER: &[&str] = &["i2c1", "pm1", "ioe1", "touch_cst820", "touch_cst9217", "imu", "spi2", "lcd", "lcd_backlight", "buttons"];
+    pub const INIT_ORDER: &[&str] = &["i2c1", "pm1", "ioe1", "spi2", "buttons", "power_seq", "touch_cst820", "touch_cst9217", "imu", "lcd", "lcd_backlight"];
 
     /// Chip GPIOs used by the board (see `take_pins_stopwatch!`).
     pub struct Pins {
@@ -537,5 +707,113 @@ pub mod stopwatch {
         pub const COMPATIBLE: &str = "gpio-keys";
         /// (button, GPIO) entries.
         pub const KEYS: &[(&str, Gpio)] = &[("a", Gpio::Chip { pin: 2, active_low: true }), ("b", Gpio::Chip { pin: 1, active_low: true })];
+    }
+    /// `/power-sequence` (m5stack,stopwatch-power-sequence).
+    pub mod power_seq {
+        #[allow(unused_imports)]
+        use super::super::Gpio;
+        pub const COMPATIBLE: &str = "m5stack,stopwatch-power-sequence";
+        /// SPI controller whose CS is held high meanwhile
+        pub const HOLD_CS: Option<&str> = Some("spi2");
+        pub const IO_EXPANDER: &str = "ioe1";
+        pub const PMIC: &str = "pm1";
+    }
+
+    /// Bring the board up in `INIT_ORDER` (generated from the binding templates).
+    #[inline(never)]
+    #[allow(unused_variables, unused_mut, unused_braces, clippy::let_unit_value)]
+    pub fn init(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devices, InitError> {
+        let mut pins = take_pins_stopwatch!(p);
+        let spare = take_spare!(p);
+        let mut delay = Delay::new();
+        // /soc/i2c@60027000 (espressif,esp32-i2c)
+        let i2c1 = {
+            if i2c1::BUS_RECOVERY {
+                probe::i2c_bus_recover(pins.i2c1_scl.reborrow(), pins.i2c1_sda.reborrow());
+            }
+            static CELL: StaticCell<RefCell<I2cBus>> = StaticCell::new();
+            let i2c = I2c::new(p.I2C1, I2cConfig::default().with_frequency(bind::hz(i2c1::CLOCK_FREQUENCY, 100_000)))
+                .map_err(|_| InitError::Config)?
+                .with_sda(pins.i2c1_sda)
+                .with_scl(pins.i2c1_scl);
+            &*CELL.init(RefCell::new(i2c))
+        };
+        // /soc/i2c@60027000/pmic@6e (m5stack,m5pm1)
+        let pm1 = ();
+        // /soc/i2c@60027000/gpio@4f (m5stack,m5ioe1)
+        let ioe1 = ();
+        // /soc/spi@60024000 (espressif,esp32-spi)
+        let spi2 = ();
+        // /buttons (gpio-keys)
+        let buttons = ButtonInputs::Gpio { a: Input::new(pins.buttons_button_a, InputConfig::default().with_pull(Pull::Up)), b: Some(Input::new(pins.buttons_button_b, InputConfig::default().with_pull(Pull::Up))) };
+        // /power-sequence (m5stack,stopwatch-power-sequence)
+        let power_seq = {
+            let _cs = Output::new(pins.spi2_cs.reborrow(), Level::High, OutputConfig::default());
+            chips::stopwatch_power_on(&mut RefCellDevice::new(i2c1), &mut delay).map_err(InitError::I2c)?;
+        };
+        // probe group `touch`: first candidate that answers (retried for slow starters)
+        let touch_group = {
+            let mut found = None;
+            for _ in 0..8 {
+                if embedded_hal::i2c::I2c::write(&mut RefCellDevice::new(i2c1), touch_cst820::ADDR, &[0x00]).is_ok() {
+                    found = Some(AnyTouch::Cst820(chips::Cst820 { i2c: RefCellDevice::new(i2c1), map: chips::TouchMap { min: (touch_cst820::TOUCHSCREEN_MIN_X.unwrap_or(0), touch_cst820::TOUCHSCREEN_MIN_Y.unwrap_or(0)), size: (touch_cst820::TOUCHSCREEN_SIZE_X.unwrap_or(lcd::WIDTH) as i32, touch_cst820::TOUCHSCREEN_SIZE_Y.unwrap_or(lcd::HEIGHT) as i32), pixels: (lcd::WIDTH as i32, lcd::HEIGHT as i32) }, inited: false }));
+                    break;
+                }
+                if embedded_hal::i2c::I2c::write(&mut RefCellDevice::new(i2c1), touch_cst9217::ADDR, &[0xD0, 0x00]).is_ok() {
+                    found = Some(AnyTouch::Cst9217(chips::Cst9217 { i2c: RefCellDevice::new(i2c1) }));
+                    break;
+                }
+                delay.delay_millis(10);
+            }
+            found
+        };
+        // /soc/i2c@60027000/imu@68 (bosch,bmi270)
+        let imu = {
+            let mut m = kumiki_bmi270::Bmi270::new(RefCellDevice::new(i2c1), imu::ADDR);
+            m.init(&mut delay).ok().map(|_| AnyImu::Bmi270(m))
+        };
+        // /soc/spi@60024000/display@0 (chipone,co5300)
+        let lcd = {
+            let (w, h) = (lcd::WIDTH, lcd::HEIGHT);
+            let fb = bind::psram_frame_buffer(p.PSRAM, w as usize * h as usize * 2).ok_or(InitError::Config)?;
+            let spi = Spi::new(p.SPI2, SpiConfig::default().with_frequency(Rate::from_hz(lcd::SPI_MAX_FREQUENCY)).with_mode(Mode::_0))
+                .map_err(|_| InitError::Config)?
+                .with_sck(pins.spi2_sck)
+                .with_cs(pins.spi2_cs)
+                .with_sio0(pins.spi2_sio0)
+                .with_sio1(pins.spi2_sio1)
+                .with_sio2(pins.spi2_sio2)
+                .with_sio3(pins.spi2_sio3)
+                .with_dma(p.DMA_CH0);
+            let bus = EspQspiDmaBus::new(spi, buf_a, buf_b);
+            let mut panel = DcsPanel::new(bus, kumiki_gfx_panels::Co5300, bind::dcs_config(lcd::WIDTH, lcd::HEIGHT, lcd::OFFSET, lcd::INVERT, lcd::RGB_ORDER), None::<NoPin>);
+            panel.init(&mut delay).map_err(|_| InitError::Display)?;
+            let mut d = kumiki_gfx::BufferedDisplay::new(Display::new(panel), Size::new(w, h), fb, <kumiki_gfx_panels::Co5300 as Model>::X_ALIGN)
+                .ok_or(InitError::Config)?;
+            DrawTarget::clear(&mut d, Rgb565::BLACK).ok();
+            d.flush().map_err(|_| InitError::Display)?;
+            AnyDisplay::Co5300(d)
+        };
+        // /backlight (kumiki,dcs-backlight)
+        let lcd_backlight = AnyBacklight::None;
+        Ok(Devices {
+            board: super::BoardId::M5StackStopWatch,
+            display: lcd,
+            backlight: lcd_backlight,
+            touch: touch_group,
+            imu: imu,
+            power: None,
+            buttons: buttons,
+            spare,
+        })
+    }
+}
+
+/// Bring up the detected board.
+pub fn init_board(id: BoardId, p: Peripherals, buf_a: prelude::DmaTxBuf, buf_b: prelude::DmaTxBuf) -> Result<prelude::Devices, prelude::InitError> {
+    match id {
+        BoardId::M5StackCoreS3 => cores3::init(p, buf_a, buf_b),
+        BoardId::M5StackAtomS3 => atoms3::init(p, buf_a, buf_b),
+        BoardId::M5StackStopWatch => stopwatch::init(p, buf_a, buf_b),
     }
 }

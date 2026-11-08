@@ -1,30 +1,58 @@
-# Board-level bindings: backlights, buttons, detection rules.
+# Board-level bindings: backlights, buttons, glue, detection rules.
 
 - compatible: "kumiki,regulator-backlight"
-  kumiki: { class: backlight }
+  kumiki:
+    class: backlight
+    # The regulator provider is an AXP2101 LDO (DLDO1 on CoreS3).
+    init: |
+      {
+          let mut b = AnyBacklight::Axp2101(chips::Axp2101Backlight(RefCellDevice::new(${busof:power-supply})));
+          kumiki_class::Backlight::set_brightness(&mut b, ${const:DEFAULT_BRIGHTNESS}.unwrap_or(160).min(255) as u8)
+              .map_err(|_| InitError::Display)?;
+          b
+      }
   properties:
     power-supply: { type: phandle, required: true }
     default-brightness: { type: int }
 
 - compatible: "gpio-backlight"
-  kumiki: { class: backlight }
+  kumiki:
+    class: backlight
+    init: "AnyBacklight::Gpio(Output::new(${pin:gpios}, Level::High, OutputConfig::default()))"
   properties:
     gpios: { type: gpios, required: true }
     default-on: { type: boolean }
 
 - compatible: "kumiki,dcs-backlight"
-  kumiki: { class: backlight }
+  kumiki: { class: backlight, init: "AnyBacklight::None" }
   properties:
     display: { type: phandle, required: true }
 
 - compatible: "gpio-keys"
-  kumiki: { class: buttons, child-props: { gpios: gpios, "kumiki,button": string } }
+  kumiki:
+    class: buttons
+    child-props: { gpios: gpios, "kumiki,button": string }
+    init: "ButtonInputs::Gpio { a: ${keypin:a}, b: ${optkeypin:b} }"
   properties: {}
 
 - compatible: "kumiki,touch-keys"
-  kumiki: { class: buttons }
+  kumiki: { class: buttons, init: "ButtonInputs::TouchAsA" }
   properties:
     touch: { type: phandle, required: true }
+
+# Glue for M5Stack StopWatch: the opaque M5PM1 / M5IOE1 power and reset
+# sequence (port of M5GFX pmic_ops::stopwatch_power_on).
+- compatible: "m5stack,stopwatch-power-sequence"
+  kumiki:
+    init: |
+      {
+          let _cs = Output::new(${pinref:@hold-cs.cs-gpios}, Level::High, OutputConfig::default());
+          chips::stopwatch_power_on(&mut RefCellDevice::new(${busof:pmic}), &mut delay).map_err(InitError::I2c)?;
+      }
+  properties:
+    pmic: { type: phandle, required: true }
+    io-expander: { type: phandle, required: true }
+    hold-cs: { type: phandle, description: "SPI controller whose CS is held high meanwhile" }
 
 - compatible: "kumiki,board-detect"
   properties: {}

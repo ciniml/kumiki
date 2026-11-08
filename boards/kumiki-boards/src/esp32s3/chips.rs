@@ -32,15 +32,54 @@ pub fn write_reg<I: I2c>(i2c: &mut I, addr: u8, reg: u8, val: u8) -> Result<(), 
 
 // ---- AXP2101 ----------------------------------------------------------------
 
-/// AXP2101 power-on for CoreS3: ALDO1 1.8 V (AW88298), ALDO2 3.3 V (ES7210),
-/// ALDO3 3.3 V (camera), ALDO4 3.3 V (TF card), BLDO1 on.
-pub fn axp2101_power_on_cores3<I: I2c>(i2c: &mut I) -> Result<(), I::Error> {
-    write_reg(i2c, AXP2101_ADDR, 0x90, 0xBF)?; // LDO on/off control 0
-    write_reg(i2c, AXP2101_ADDR, 0x92, 18 - 5)?;
-    write_reg(i2c, AXP2101_ADDR, 0x93, 33 - 5)?;
-    write_reg(i2c, AXP2101_ADDR, 0x94, 33 - 5)?;
-    write_reg(i2c, AXP2101_ADDR, 0x95, 33 - 5)?;
-    write_reg(i2c, AXP2101_ADDR, 0x30, 0x0F) // ADC: battery / VBUS / VSYS
+/// AXP2101 LDO channels (DT regulator node names).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AxpLdo {
+    /// ALDO1..ALDO4
+    Aldo1,
+    #[allow(missing_docs)]
+    Aldo2,
+    #[allow(missing_docs)]
+    Aldo3,
+    #[allow(missing_docs)]
+    Aldo4,
+    /// BLDO1, BLDO2
+    Bldo1,
+    #[allow(missing_docs)]
+    Bldo2,
+    /// DLDO1 (CoreS3: LCD backlight)
+    Dldo1,
+}
+
+impl AxpLdo {
+    /// (enable bit in reg 0x90, voltage register)
+    const fn regs(self) -> (u8, u8) {
+        match self {
+            AxpLdo::Aldo1 => (0, 0x92),
+            AxpLdo::Aldo2 => (1, 0x93),
+            AxpLdo::Aldo3 => (2, 0x94),
+            AxpLdo::Aldo4 => (3, 0x95),
+            AxpLdo::Bldo1 => (4, 0x96),
+            AxpLdo::Bldo2 => (5, 0x97),
+            AxpLdo::Dldo1 => (7, 0x99),
+        }
+    }
+}
+
+/// Apply DT regulator settings to an AXP2101: each entry `(ldo, millivolts)`
+/// is enabled, and its voltage set when `millivolts` is non-zero
+/// (0.5–3.5 V in 100 mV steps). Also enables the battery / VBUS / VSYS ADC.
+pub fn axp2101_init<I: I2c>(i2c: &mut I, addr: u8, regulators: &[(AxpLdo, u16)]) -> Result<(), I::Error> {
+    let mut enable = read_reg(i2c, addr, 0x90)?;
+    for &(ldo, mv) in regulators {
+        let (bit, vreg) = ldo.regs();
+        if mv != 0 {
+            write_reg(i2c, addr, vreg, (mv.clamp(500, 3500) / 100 - 5) as u8)?;
+        }
+        enable |= 1 << bit;
+    }
+    write_reg(i2c, addr, 0x90, enable)?;
+    write_reg(i2c, addr, 0x30, 0x0F) // ADC: battery / VBUS / VSYS
 }
 
 /// LCD backlight on AXP2101 DLDO1 (CoreS3).
@@ -78,15 +117,76 @@ impl<I: I2c> Power for Axp2101Power<I> {
 
 // ---- AW9523B ----------------------------------------------------------------
 
-/// AW9523B setup for CoreS3 (as in M5GFX / stackchan-rs): directions, P0
-/// push-pull, outputs. `lcd_reset_released`: drive LCD_RST (P1_5) high.
-pub fn aw9523_init_cores3<I: I2c>(i2c: &mut I, lcd_reset_released: bool) -> Result<(), I::Error> {
-    write_reg(i2c, AW9523_ADDR, 0x04, 0b0001_1000)?; // P0 direction (1 = input)
-    write_reg(i2c, AW9523_ADDR, 0x05, 0b0000_1100)?; // P1 direction
-    write_reg(i2c, AW9523_ADDR, 0x11, 0b0001_0000)?; // GCR: P0 push-pull
-    write_reg(i2c, AW9523_ADDR, 0x02, 0b0000_0111)?; // P0 outputs
-    let p1 = if lcd_reset_released { 0b0010_0011 } else { 0b0000_0011 };
-    write_reg(i2c, AW9523_ADDR, 0x03, p1)
+/// Initial state of an IO-expander line (from DT `gpio-hog` nodes and from
+/// the lines other devices reference, e.g. a panel's `reset-gpios`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineInit {
+    /// Input.
+    Input,
+    /// Output, driven high.
+    OutputHigh,
+    /// Output, driven low.
+    OutputLow,
+}
+
+/// Configure an AW9523B: lines 0..7 = P0_0..P0_7, 8..15 = P1_0..P1_7.
+/// Unlisted lines become inputs. `p0_push_pull`: GCR bit 4.
+pub fn aw9523_init<I: I2c>(i2c: &mut I, addr: u8, p0_push_pull: bool, lines: &[(u8, LineInit)]) -> Result<(), I::Error> {
+    let (mut dir, mut out) = (0xFFFFu16, 0u16); // 1 = input
+    for &(line, init) in lines {
+        let m = 1u16 << line;
+        match init {
+            LineInit::Input => {}
+            LineInit::OutputHigh => {
+                dir &= !m;
+                out |= m;
+            }
+            LineInit::OutputLow => dir &= !m,
+        }
+    }
+    write_reg(i2c, addr, 0x04, dir as u8)?;
+    write_reg(i2c, addr, 0x05, (dir >> 8) as u8)?;
+    write_reg(i2c, addr, 0x11, if p0_push_pull { 0x10 } else { 0x00 })?;
+    write_reg(i2c, addr, 0x02, out as u8)?;
+    write_reg(i2c, addr, 0x03, (out >> 8) as u8)
+}
+
+/// One AW9523B output line as an `embedded_hal::digital::OutputPin`
+/// (e.g. a panel reset line on the expander).
+pub struct Aw9523Pin<I> {
+    /// The (shared) I²C device.
+    pub i2c: I,
+    /// 7-bit address.
+    pub addr: u8,
+    /// Line 0..15.
+    pub line: u8,
+}
+
+/// Error of an expander pin.
+#[derive(Debug)]
+pub struct ExpanderPinError;
+
+impl embedded_hal::digital::Error for ExpanderPinError {
+    fn kind(&self) -> embedded_hal::digital::ErrorKind {
+        embedded_hal::digital::ErrorKind::Other
+    }
+}
+
+impl<I: I2c> embedded_hal::digital::ErrorType for Aw9523Pin<I> {
+    type Error = ExpanderPinError;
+}
+
+impl<I: I2c> embedded_hal::digital::OutputPin for Aw9523Pin<I> {
+    fn set_low(&mut self) -> Result<(), ExpanderPinError> {
+        let reg = 0x02 + self.line / 8;
+        let v = read_reg(&mut self.i2c, self.addr, reg).map_err(|_| ExpanderPinError)?;
+        write_reg(&mut self.i2c, self.addr, reg, v & !(1 << (self.line % 8))).map_err(|_| ExpanderPinError)
+    }
+    fn set_high(&mut self) -> Result<(), ExpanderPinError> {
+        let reg = 0x02 + self.line / 8;
+        let v = read_reg(&mut self.i2c, self.addr, reg).map_err(|_| ExpanderPinError)?;
+        write_reg(&mut self.i2c, self.addr, reg, v | (1 << (self.line % 8))).map_err(|_| ExpanderPinError)
+    }
 }
 
 // ---- M5PM1 / M5IOE1 (StopWatch) ------------------------------------------------

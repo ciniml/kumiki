@@ -23,6 +23,360 @@ pub struct Options {
     pub source_root: std::path::PathBuf,
 }
 
+/// Items the generated bring-up code and the binding templates use. The
+/// family module (`super` of the generated module) provides the board-side
+/// types (`Devices`, `Any*`, `chips`, `bind`, `probe`, …).
+const PRELUDE: &str = r#"mod prelude {
+    pub use core::cell::RefCell;
+    pub use embedded_graphics_core::{draw_target::DrawTarget, geometry::Size, pixelcolor::{Rgb565, RgbColor}};
+    pub use embedded_hal_bus::i2c::RefCellDevice;
+    pub use esp_hal::{
+        delay::Delay,
+        dma::DmaTxBuf,
+        gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
+        i2c::master::{Config as I2cConfig, I2c},
+        peripherals::Peripherals,
+        spi::{Mode, master::{Config as SpiConfig, Spi}},
+        time::Rate,
+    };
+    pub use kumiki_gfx::Display;
+    pub use kumiki_gfx_bus_esp::{EspQspiDmaBus, EspSpiDmaBus, SpiHost};
+    pub use kumiki_gfx_panels::{DcsPanel, Model, NoPin};
+    pub use kumiki_mpu6886::Mpu6886;
+    pub use static_cell::StaticCell;
+    pub use super::super::{
+        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
+        Spare,
+    };
+}
+"#;
+
+// ---- template expansion ---------------------------------------------------------
+
+struct Ctx<'a> {
+    board: &'a Board,
+    bindings: &'a Bindings,
+    path: String,
+}
+
+impl Ctx<'_> {
+    fn tree(&self) -> &Tree {
+        &self.board.tree
+    }
+    fn node(&self, path: &str) -> &Node {
+        self.tree().node(path).unwrap()
+    }
+    fn err(&self, msg: impl std::fmt::Display) -> Error {
+        Error(format!("{}: {}: {msg}", self.board.source.display(), self.path))
+    }
+
+    /// Resolve `parent.` / `@PROP.` prefixes: returns (node path, rest).
+    fn target<'s>(&self, mut spec: &'s str) -> Result<(String, &'s str), Error> {
+        let mut path = self.path.clone();
+        loop {
+            if let Some(rest) = spec.strip_prefix("parent.") {
+                path = Tree::parent_path(&path).ok_or_else(|| self.err("no parent"))?;
+                spec = rest;
+            } else if let Some(rest) = spec.strip_prefix('@') {
+                let (prop, rest) = rest.split_once('.').ok_or_else(|| self.err(format!("bad reference spec @{rest}")))?;
+                let p = self.node(&path).prop(prop).ok_or_else(|| self.err(format!("missing {prop}")))?;
+                path = phandle_target(self.tree(), p).ok_or_else(|| self.err(format!("{prop}: unresolved phandle")))?;
+                spec = rest;
+            } else {
+                return Ok((path, spec));
+            }
+        }
+    }
+
+    fn pin(&self, arg: &str) -> Result<String, Error> {
+        let (path, rest) = self.target(arg)?;
+        let (prop, index) = match rest.split_once('[') {
+            Some((p, i)) => (p, i.trim_end_matches(']').parse::<usize>().map_err(|_| self.err("bad pin index"))?),
+            None => (rest, 0),
+        };
+        let p = self.node(&path).prop(prop).ok_or_else(|| self.err(format!("{path}: missing {prop}")))?;
+        let list = gpios(self.tree(), p)?;
+        match list.get(index) {
+            Some(Gpio::Chip { .. }) => Ok(format!("pins.{}", crate::pin_field(self.tree(), &path, prop, index, list.len()))),
+            Some(Gpio::Expander { .. }) => Err(self.err(format!("{prop}[{index}] is an expander line, not a chip GPIO"))),
+            None => Err(self.err(format!("{prop} has no entry {index}"))),
+        }
+    }
+
+    /// Variable of the I²C bus the device owning `path` sits on.
+    fn bus_of(&self, path: &str) -> Result<String, Error> {
+        let mut cur = path.to_string();
+        while let Some(parent) = Tree::parent_path(&cur) {
+            let pn = self.node(&parent);
+            if self.bindings.for_node(pn).and_then(|b| b.kumiki.controller.as_deref()) == Some("i2c") {
+                return Ok(label(self.tree(), &parent));
+            }
+            cur = parent;
+        }
+        Err(self.err(format!("{path} is not on an I²C bus")))
+    }
+
+    fn expand(&self, tpl: &str) -> Result<String, Error> {
+        let mut out = String::new();
+        let mut rest = tpl;
+        while let Some(i) = rest.find("${") {
+            out.push_str(&rest[..i]);
+            let end = rest[i..].find('}').ok_or_else(|| self.err("unterminated ${"))? + i;
+            let ph = &rest[i + 2..end];
+            out.push_str(&self.placeholder(ph)?);
+            rest = &rest[end + 1..];
+        }
+        out.push_str(rest);
+        Ok(out)
+    }
+
+    fn placeholder(&self, ph: &str) -> Result<String, Error> {
+        let (kind, arg) = ph.split_once(':').unwrap_or((ph, ""));
+        let tree = self.tree();
+        let me = self.node(&self.path);
+        let my_label = label(tree, &self.path);
+        let binding = self.bindings.for_node(me).ok_or_else(|| self.err("no binding"))?;
+        Ok(match kind {
+            "label" => my_label,
+            "const" => {
+                let (path, prop) = self.target(arg)?;
+                format!("{}::{}", label(tree, &path), ident_upper(prop))
+            }
+            "instance" => {
+                let path = if arg == "parent" { Tree::parent_path(&self.path).unwrap() } else { self.path.clone() };
+                let inst = self.node(&path).prop("kumiki,instance").and_then(|p| p.str()).ok_or_else(|| self.err("no kumiki,instance"))?;
+                format!("p.{inst}")
+            }
+            "spihost" => {
+                let parent = Tree::parent_path(&self.path).unwrap();
+                let inst = self.node(&parent).prop("kumiki,instance").and_then(|p| p.str()).unwrap_or("SPI2");
+                format!("SpiHost::{}{}", &inst[..1], inst[1..].to_lowercase())
+            }
+            "pin" => self.pin(arg)?,
+            "pinref" => format!("{}.reborrow()", self.pin(arg)?),
+            "bus" => self.bus_of(&self.path)?,
+            "busof" => {
+                let p = me.prop(arg).ok_or_else(|| self.err(format!("missing {arg}")))?;
+                let target = phandle_target(tree, p).ok_or_else(|| self.err(format!("{arg}: unresolved")))?;
+                // The provider device is the target or its nearest ancestor on the bus.
+                self.bus_of(&target)?
+            }
+            "model" => binding.kumiki.model.clone().ok_or_else(|| self.err("binding has no model"))?,
+            "variant" => binding.kumiki.variant.clone().ok_or_else(|| self.err("binding has no variant"))?,
+            "dcs_config" => {
+                let l = &my_label;
+                format!("bind::dcs_config({l}::WIDTH, {l}::HEIGHT, {l}::OFFSET, {l}::INVERT, {l}::RGB_ORDER)")
+            }
+            "reset" => match me.prop("reset-gpios") {
+                None => String::new(),
+                Some(p) => match gpios(tree, p)?.first() {
+                    Some(Gpio::Chip { .. }) => format!(
+                        "{{ let mut rst = Output::new({}, Level::High, OutputConfig::default()); bind::reset_pulse(&mut rst, &mut delay); core::mem::forget(rst); }}",
+                        self.pin("reset-gpios")?
+                    ),
+                    Some(Gpio::Expander { controller, pin, .. }) => {
+                        let cpath = tree.resolve(controller).ok_or_else(|| self.err("unresolved reset controller"))?;
+                        let cctx = Ctx { board: self.board, bindings: self.bindings, path: cpath.clone() };
+                        let cb = self.bindings.for_node(self.node(&cpath)).ok_or_else(|| self.err("controller has no binding"))?;
+                        let tpl = cb.kumiki.gpio_pin.as_deref().ok_or_else(|| self.err("controller binding has no gpio-pin"))?;
+                        let expr = cctx.expand(&tpl.replace("${line}", &pin.to_string()))?;
+                        format!("bind::reset_pulse(&mut {expr}, &mut delay);")
+                    }
+                    None => String::new(),
+                },
+            },
+            "lines" => {
+                let mut lines: std::collections::BTreeMap<u32, &str> = std::collections::BTreeMap::new();
+                // Lines other devices reference: outputs at their inactive level.
+                tree.root.walk("/", &mut |_, n| {
+                    if !is_present(n) {
+                        return;
+                    }
+                    for p in n.props.iter().filter(|p| p.name.ends_with("-gpios") || p.name == "gpios") {
+                        for g in gpios(tree, p).unwrap_or_default() {
+                            if let Gpio::Expander { controller, pin, flags } = g
+                                && controller == my_label
+                            {
+                                lines.insert(pin, if flags & 1 != 0 { "OutputHigh" } else { "OutputLow" });
+                            }
+                        }
+                    }
+                });
+                // gpio-hog children win.
+                for c in me.children.iter().filter(|c| c.has("gpio-hog")) {
+                    let line = c.prop("gpios").and_then(|p| p.u32()).ok_or_else(|| self.err(format!("{}: hog without gpios", c.name)))?;
+                    let mode = if c.has("output-high") {
+                        "OutputHigh"
+                    } else if c.has("output-low") {
+                        "OutputLow"
+                    } else {
+                        "Input"
+                    };
+                    lines.insert(line, mode);
+                }
+                let items: Vec<String> = lines.iter().map(|(l, m)| format!("({l}, chips::LineInit::{m})")).collect();
+                format!("&[{}]", items.join(", "))
+            }
+            "regulators" => {
+                let mut items = Vec::new();
+                if let Some(regs) = me.child("regulators") {
+                    for r in &regs.children {
+                        let mv = r.prop("regulator-min-microvolt").and_then(|p| p.u32()).map(|uv| uv / 1000);
+                        if mv.is_none() && !r.has("regulator-boot-on") {
+                            continue;
+                        }
+                        let name = r.base_name();
+                        let variant = format!("{}{}", &name[..1], name[1..].to_lowercase());
+                        items.push(format!("(chips::AxpLdo::{variant}, {})", mv.unwrap_or(0)));
+                    }
+                }
+                format!("&[{}]", items.join(", "))
+            }
+            "touchmap" => {
+                let disp = chosen_refs(tree, "kumiki,display").into_iter().next().ok_or_else(|| self.err("no chosen kumiki,display"))?;
+                let d = label(tree, &disp);
+                let l = &my_label;
+                format!(
+                    "chips::TouchMap {{ min: ({l}::TOUCHSCREEN_MIN_X.unwrap_or(0), {l}::TOUCHSCREEN_MIN_Y.unwrap_or(0)), size: ({l}::TOUCHSCREEN_SIZE_X.unwrap_or({d}::WIDTH) as i32, {l}::TOUCHSCREEN_SIZE_Y.unwrap_or({d}::HEIGHT) as i32), pixels: ({d}::WIDTH as i32, {d}::HEIGHT as i32) }}"
+                )
+            }
+            "keypin" | "optkeypin" => {
+                let child = me.children.iter().find(|c| c.prop("kumiki,button").and_then(|p| p.str()) == Some(arg));
+                match (kind, child) {
+                    (_, Some(c)) => {
+                        let field = crate::pin_field(tree, &self.path, &format!("{}-gpios", c.name), 0, 1);
+                        let input = format!("Input::new(pins.{field}, InputConfig::default().with_pull(Pull::Up))");
+                        if kind == "optkeypin" { format!("Some({input})") } else { input }
+                    }
+                    ("optkeypin", None) => "None".into(),
+                    _ => return Err(self.err(format!("no button {arg:?}"))),
+                }
+            }
+            _ => return Err(self.err(format!("unknown placeholder ${{{ph}}}"))),
+        })
+    }
+}
+
+/// Path of the node a phandle property points to.
+fn phandle_target(tree: &Tree, p: &kumiki_dt::Property) -> Option<String> {
+    p.value.iter().find_map(|v| match v {
+        Value::PathRef(r) => tree.resolve(r),
+        Value::Cells(c) => c.iter().find_map(|c| match c {
+            Cell::Ref(r) => tree.resolve(r),
+            _ => None,
+        }),
+        _ => None,
+    })
+}
+
+/// All paths a `/chosen` property references.
+fn chosen_refs(tree: &Tree, name: &str) -> Vec<String> {
+    let Some(p) = tree.node("/chosen").and_then(|c| c.prop(name)) else { return Vec::new() };
+    p.value
+        .iter()
+        .filter_map(|v| match v {
+            Value::PathRef(r) => tree.resolve(r),
+            Value::Cells(c) => c.iter().find_map(|c| match c {
+                Cell::Ref(r) => tree.resolve(r),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Emit `pub fn init(…)` for one board (inside its module).
+fn emit_init(out: &mut String, board: &Board, bindings: &Bindings) -> Result<(), Error> {
+    let tree = &board.tree;
+    let order = init_order(board)?;
+    let path_of = |l: &str| -> String {
+        let mut found = String::new();
+        tree.root.walk("/", &mut |p, n| {
+            if found.is_empty() && (n.labels.iter().any(|x| x == l) || (n.labels.is_empty() && ident_lower(n.base_name()) == l)) {
+                found = p.to_string();
+            }
+        });
+        found
+    };
+    writeln!(out, "\n    /// Bring the board up in `INIT_ORDER` (generated from the binding templates).").unwrap();
+    writeln!(out, "    #[inline(never)]").unwrap();
+    writeln!(out, "    #[allow(unused_variables, unused_mut, unused_braces, clippy::let_unit_value)]").unwrap();
+    writeln!(out, "    pub fn init(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devices, InitError> {{").unwrap();
+    writeln!(out, "        let mut pins = take_pins_{}!(p);", board.module).unwrap();
+    writeln!(out, "        let spare = take_spare!(p);").unwrap();
+    writeln!(out, "        let mut delay = Delay::new();").unwrap();
+    let mut groups_done: Vec<String> = Vec::new();
+    for l in &order {
+        let path = path_of(l);
+        let n = tree.node(&path).unwrap();
+        let b = bindings.for_node(n).unwrap();
+        if let Some(group) = n.prop("kumiki,probe-group").and_then(|p| p.str()) {
+            if groups_done.iter().any(|g| g == group) {
+                continue;
+            }
+            groups_done.push(group.to_string());
+            // All candidates of the group, in tree order.
+            let mut members = Vec::new();
+            tree.root.walk("/", &mut |p, m| {
+                if is_present(m) && m.prop("kumiki,probe-group").and_then(|q| q.str()) == Some(group) {
+                    members.push(p.to_string());
+                }
+            });
+            writeln!(out, "        // probe group `{group}`: first candidate that answers (retried for slow starters)").unwrap();
+            writeln!(out, "        let {group}_group = {{\n            let mut found = None;\n            for _ in 0..8 {{").unwrap();
+            for m in &members {
+                let ctx = Ctx { board, bindings, path: m.clone() };
+                let mb = bindings.for_node(tree.node(m).unwrap()).unwrap();
+                let probe = mb.kumiki.probe.as_deref().ok_or_else(|| ctx.err("candidate binding has no probe"))?;
+                let init = mb.kumiki.init.as_deref().ok_or_else(|| ctx.err("binding has no init"))?;
+                writeln!(out, "                if {} {{", ctx.expand(probe)?).unwrap();
+                writeln!(out, "                    found = Some({});\n                    break;\n                }}", ctx.expand(init.trim())?).unwrap();
+            }
+            writeln!(out, "                delay.delay_millis(10);\n            }}\n            found\n        }};").unwrap();
+            continue;
+        }
+        let ctx = Ctx { board, bindings, path: path.clone() };
+        let tpl = b.kumiki.init.as_deref().ok_or_else(|| ctx.err(format!("binding {} has no init template", b.compatible)))?;
+        let code = ctx.expand(tpl.trim())?;
+        let code = code.replace('\n', "\n        ");
+        writeln!(out, "        // {path} ({})", b.compatible).unwrap();
+        writeln!(out, "        let {l} = {code};").unwrap();
+    }
+    // Devices
+    let var_of = |path: &str| -> String {
+        let n = tree.node(path).unwrap();
+        match n.prop("kumiki,probe-group").and_then(|p| p.str()) {
+            Some(g) => format!("{g}_group"),
+            None => label(tree, path),
+        }
+    };
+    let class_node = |class: &str| -> Option<String> {
+        let mut found = None;
+        tree.root.walk("/", &mut |p, n| {
+            if found.is_none() && is_present(n) && p != "/" && bindings.for_node(n).and_then(|b| b.kumiki.class.as_deref()) == Some(class) {
+                found = Some(p.to_string());
+            }
+        });
+        found
+    };
+    let display = chosen_refs(tree, "kumiki,display").into_iter().next().ok_or_else(|| Error(format!("{}: no chosen kumiki,display", board.source.display())))?;
+    let touch = match chosen_refs(tree, "kumiki,touch").first() {
+        Some(t) if tree.node(t).unwrap().has("kumiki,probe-group") => var_of(t),
+        Some(t) => format!("Some({})", var_of(t)),
+        None => "None".into(),
+    };
+    let imu = chosen_refs(tree, "kumiki,imu").first().map(|p| var_of(p)).unwrap_or_else(|| "None".into());
+    let power = chosen_refs(tree, "kumiki,power").first().map(|p| format!("Some({})", var_of(p))).unwrap_or_else(|| "None".into());
+    let backlight = class_node("backlight").map(|p| var_of(&p)).unwrap_or_else(|| "AnyBacklight::None".into());
+    let buttons = class_node("buttons").map(|p| var_of(&p)).ok_or_else(|| Error(format!("{}: no buttons node", board.source.display())))?;
+    writeln!(out, "        Ok(Devices {{").unwrap();
+    writeln!(out, "            board: super::BoardId::{},", variant_of(board.model())).unwrap();
+    writeln!(out, "            display: {},", var_of(&display)).unwrap();
+    writeln!(out, "            backlight: {backlight},\n            touch: {touch},\n            imu: {imu},\n            power: {power},").unwrap();
+    writeln!(out, "            buttons: {buttons},\n            spare,\n        }})\n    }}").unwrap();
+    Ok(())
+}
+
 fn ident_upper(s: &str) -> String {
     s.trim_start_matches("kumiki,").replace(['-', ',', '#', '.'], "_").to_uppercase()
 }
@@ -297,6 +651,8 @@ impl DetectLog {
 
 "#,
     );
+    out.push_str(PRELUDE);
+    out.push('\n');
     // Board ids.
     writeln!(out, "/// Boards of this family, in detection order.").unwrap();
     writeln!(out, "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub enum BoardId {{").unwrap();
@@ -368,6 +724,7 @@ impl DetectLog {
         let order = init_order(b)?;
         writeln!(out, "/// {} (`{}`), from `{}`.", b.model(), b.compatible(), rel(&b.source)).unwrap();
         writeln!(out, "pub mod {} {{", b.module).unwrap();
+        writeln!(out, "    #[allow(unused_imports)]\n    use super::prelude::*;\n").unwrap();
         writeln!(out, "    pub const NAME: &str = {:?};", b.model()).unwrap();
         writeln!(out, "    pub const COMPATIBLE: &str = {:?};", b.compatible()).unwrap();
         writeln!(out, "    /// Detection candidate (no `board-*` feature, or `{}`).", feature_of(b)).unwrap();
@@ -398,8 +755,20 @@ impl DetectLog {
             res = emit_node(&mut out, tree, path, n, binding);
         });
         res?;
+        emit_init(&mut out, b, bindings)?;
         writeln!(out, "}}\n").unwrap();
     }
+    // Dispatch.
+    writeln!(out, "/// Bring up the detected board.").unwrap();
+    writeln!(
+        out,
+        "pub fn init_board(id: BoardId, p: Peripherals, buf_a: prelude::DmaTxBuf, buf_b: prelude::DmaTxBuf) -> Result<prelude::Devices, prelude::InitError> {{\n    match id {{"
+    )
+    .unwrap();
+    for b in boards {
+        writeln!(out, "        BoardId::{} => {}::init(p, buf_a, buf_b),", variant_of(b.model()), b.module).unwrap();
+    }
+    writeln!(out, "    }}\n}}").unwrap();
     // Trim the final blank line for a stable file ending.
     while out.ends_with("\n\n") {
         out.pop();
