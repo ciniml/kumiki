@@ -1,7 +1,8 @@
 //! `kumiki-dtgen` CLI.
 //!
 //! ```text
-//! kumiki-dtgen esp32s3 <out.rs> <board.dts>...      generate (paths relative to the repository root)
+//! kumiki-dtgen esp32s3 <out.rs> <board.dts>...      generate for ESP32-S3 / esp-hal (paths relative to the repository root)
+//! kumiki-dtgen p4v1 <out.rs> <board.dts>...         generate for ESP32-P4 rev v1 / kumiki-p4v1-hal
 //! kumiki-dtgen check <board.dts>...                 validate only
 //! kumiki-dtgen order <board.dts>                    print the init order
 //! ```
@@ -9,7 +10,10 @@
 
 use std::path::{Path, PathBuf};
 
-use kumiki_dtgen::{gen_esp32s3, init_order, validate, Bindings, Board};
+use kumiki_dtgen::{
+    gen_esp::{self, Backend},
+    init_order, validate, Bindings, Board,
+};
 
 fn repo_root() -> PathBuf {
     // dt/kumiki-dtgen → repository root
@@ -23,10 +27,11 @@ fn main() {
     let bindings = Bindings::load_dir(&root.join("boards/bindings")).unwrap_or_else(|e| fail(&e.to_string()));
     let load = |p: &String| Board::load(&root.join(p), &inc).unwrap_or_else(|e| fail(&e.to_string()));
     match args.first().map(String::as_str) {
-        Some("esp32s3") if args.len() >= 3 => {
+        Some(family @ ("esp32s3" | "p4v1")) if args.len() >= 3 => {
             let boards: Vec<Board> = args[2..].iter().map(load).collect();
-            let opt = gen_esp32s3::Options { module_path: "$crate::esp32s3::generated".into(), source_root: root.clone() };
-            let code = gen_esp32s3::generate(&boards, &bindings, &opt).unwrap_or_else(|e| fail(&e.to_string()));
+            let backend = if family == "p4v1" { Backend::P4v1 } else { Backend::Esp32s3 };
+            let opt = gen_esp::Options { backend, module_path: format!("$crate::{family}::generated"), source_root: root.clone() };
+            let code = gen_esp::generate(&boards, &bindings, &opt).unwrap_or_else(|e| fail(&e.to_string()));
             std::fs::write(root.join(&args[1]), code).unwrap_or_else(|e| fail(&e.to_string()));
             eprintln!("wrote {}", args[1]);
         }
@@ -48,7 +53,7 @@ fn main() {
             let b = load(&args[1]);
             println!("{}", init_order(&b).unwrap_or_else(|e| fail(&e.to_string())).join(" -> "));
         }
-        _ => fail("usage: kumiki-dtgen esp32s3 <out.rs> <board.dts>... | check <board.dts>... | order <board.dts>"),
+        _ => fail("usage: kumiki-dtgen esp32s3|p4v1 <out.rs> <board.dts>... | check <board.dts>... | order <board.dts>"),
     }
 }
 

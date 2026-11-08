@@ -44,6 +44,38 @@
     scl-gpios: { type: gpios }
     kumiki,bus-recovery: { type: boolean, description: "clock SCL to free a stuck target before use" }
 
+# ---- ESP32-P4 rev v1 (kumiki-p4v1-hal) ----------------------------------------
+- compatible: "espressif,esp32p4-gpio"
+  properties:
+    gpio-controller: { type: boolean, required: true }
+    "#gpio-cells": { type: int, required: true }
+    ngpios: { type: int, required: true }
+    reg: { type: array }
+
+- compatible: "espressif,esp32p4-i2c"
+  kumiki:
+    controller: i2c
+    init: |
+      {
+          static CELL: StaticCell<RefCell<I2cBus>> = StaticCell::new();
+          let i2c = I2c::new(${instance}, ${pin:sda-gpios}, ${pin:scl-gpios}, bind::hz(${const:CLOCK_FREQUENCY}, 100_000));
+          &*CELL.init(RefCell::new(i2c))
+      }
+  properties:
+    reg: { type: array }
+    kumiki,instance: { type: string, required: true }
+    clock-frequency: { type: int }
+    sda-gpios: { type: gpios }
+    scl-gpios: { type: gpios }
+
+- compatible: "espressif,esp32p4-dsi"
+  kumiki:
+    controller: dsi
+    # The panel on the link brings the host up (timing and init table are per panel).
+    init: "()"
+  properties:
+    reg: { type: array }
+
 - compatible: "espressif,esp32-spi"
   kumiki:
     controller: spi

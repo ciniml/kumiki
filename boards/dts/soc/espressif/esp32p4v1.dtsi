@@ -1,0 +1,57 @@
+/*
+ * ESP32-P4 chip revision v1.x (subset used by kumiki board definitions).
+ * Hand-written (esp-metadata describes rev v3 only). Addresses from ESP-IDF
+ * components/soc/esp32p4/register/hw_ver1 (reg_base.h).
+ * Driven by kumiki-p4v1-hal; `kumiki,instance` names its peripheral fields.
+ */
+
+/ {
+	#address-cells = <1>;
+	#size-cells = <1>;
+	compatible = "espressif,esp32p4";
+
+	chosen {
+	};
+
+	soc {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "simple-bus";
+		ranges;
+
+		gpio: gpio@500e0000 {
+			compatible = "espressif,esp32p4-gpio";
+			reg = <0x500e0000 0x1000>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			ngpios = <55>;
+		};
+
+		i2c0: i2c@500c4000 {
+			compatible = "espressif,esp32p4-i2c";
+			reg = <0x500c4000 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			kumiki,instance = "i2c0";
+			status = "disabled";
+		};
+
+		i2c1: i2c@500c5000 {
+			compatible = "espressif,esp32p4-i2c";
+			reg = <0x500c5000 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			kumiki,instance = "i2c1";
+			status = "disabled";
+		};
+
+		/* MIPI-DSI host + DPI bridge; the frame DMA reads a PSRAM frame buffer. */
+		dsi: dsi@50105000 {
+			compatible = "espressif,esp32p4-dsi";
+			reg = <0x50105000 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+	};
+};

@@ -1,7 +1,7 @@
 //! Repository-level checks of the board descriptions.
 //!
 //! * `generated_code_is_up_to_date`: regenerating from the DTS must reproduce
-//!   the checked-in `boards/kumiki-boards/src/esp32s3/generated.rs`.
+//!   the checked-in `boards/kumiki-boards/src/<family>/generated.rs`.
 //! * `dts_compiles_with_dtc`: the same DTS files compile with the reference
 //!   `cpp` + `dtc` without warnings (skipped when the tools are missing).
 
@@ -10,10 +10,25 @@ use std::{
     process::Command,
 };
 
-use kumiki_dtgen::{gen_esp32s3, init_order, validate, Bindings, Board};
+use kumiki_dtgen::{
+    gen_esp::{self, Backend},
+    init_order, validate, Bindings, Board,
+};
 
-const ESP32S3_BOARDS: &[&str] = &["boards/dts/m5stack/cores3.dts", "boards/dts/m5stack/atoms3.dts", "boards/dts/m5stack/stopwatch.dts"];
-const ESP32S3_OUT: &str = "boards/kumiki-boards/src/esp32s3/generated.rs";
+struct Family {
+    name: &'static str,
+    backend: Backend,
+    boards: &'static [&'static str],
+}
+
+const FAMILIES: &[Family] = &[
+    Family {
+        name: "esp32s3",
+        backend: Backend::Esp32s3,
+        boards: &["boards/dts/m5stack/cores3.dts", "boards/dts/m5stack/atoms3.dts", "boards/dts/m5stack/stopwatch.dts"],
+    },
+    Family { name: "p4v1", backend: Backend::P4v1, boards: &["boards/dts/m5stack/tab5.dts"] },
+];
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
@@ -23,18 +38,20 @@ fn includes(root: &Path) -> Vec<PathBuf> {
     vec![root.join("boards/dts"), root.join("boards/dts/include")]
 }
 
-fn boards(root: &Path) -> Vec<Board> {
-    ESP32S3_BOARDS.iter().map(|b| Board::load(&root.join(b), &includes(root)).unwrap()).collect()
+fn boards(root: &Path, f: &Family) -> Vec<Board> {
+    f.boards.iter().map(|b| Board::load(&root.join(b), &includes(root)).unwrap()).collect()
 }
 
 #[test]
 fn boards_validate() {
     let root = root();
     let bindings = Bindings::load_dir(&root.join("boards/bindings")).unwrap();
-    for b in boards(&root) {
-        let errs = validate(&b, &bindings);
-        assert!(errs.is_empty(), "{}: {errs:#?}", b.source.display());
-        init_order(&b).unwrap();
+    for f in FAMILIES {
+        for b in boards(&root, f) {
+            let errs = validate(&b, &bindings);
+            assert!(errs.is_empty(), "{}: {errs:#?}", b.source.display());
+            init_order(&b).unwrap();
+        }
     }
 }
 
@@ -42,14 +59,22 @@ fn boards_validate() {
 fn generated_code_is_up_to_date() {
     let root = root();
     let bindings = Bindings::load_dir(&root.join("boards/bindings")).unwrap();
-    let opt = gen_esp32s3::Options { module_path: "$crate::esp32s3::generated".into(), source_root: root.clone() };
-    let code = gen_esp32s3::generate(&boards(&root), &bindings, &opt).unwrap();
-    let on_disk = std::fs::read_to_string(root.join(ESP32S3_OUT)).unwrap();
-    assert!(
-        code == on_disk,
-        "{ESP32S3_OUT} is stale; regenerate with:\n  cargo run -p kumiki-dtgen -- esp32s3 {ESP32S3_OUT} {}",
-        ESP32S3_BOARDS.join(" ")
-    );
+    for f in FAMILIES {
+        let opt = gen_esp::Options {
+            backend: f.backend,
+            module_path: format!("$crate::{}::generated", f.name),
+            source_root: root.clone(),
+        };
+        let code = gen_esp::generate(&boards(&root, f), &bindings, &opt).unwrap();
+        let out = format!("boards/kumiki-boards/src/{}/generated.rs", f.name);
+        let on_disk = std::fs::read_to_string(root.join(&out)).unwrap();
+        assert!(
+            code == on_disk,
+            "{out} is stale; regenerate with:\n  cargo run -p kumiki-dtgen -- {} {out} {}",
+            f.name,
+            f.boards.join(" ")
+        );
+    }
 }
 
 #[test]
@@ -62,7 +87,7 @@ fn dts_compiles_with_dtc() {
     let root = root();
     let out_dir = std::env::temp_dir().join(format!("kumiki-dtc-{}", std::process::id()));
     std::fs::create_dir_all(&out_dir).unwrap();
-    for b in ESP32S3_BOARDS {
+    for b in FAMILIES.iter().flat_map(|f| f.boards.iter()) {
         let stem = Path::new(b).file_stem().unwrap().to_string_lossy().to_string();
         let pp = out_dir.join(format!("{stem}.pp.dts"));
         let cpp = Command::new("cpp")

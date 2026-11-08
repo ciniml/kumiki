@@ -8,13 +8,14 @@
 //!    must resolve, chip GPIOs must exist and must not be used twice;
 //! 3. compute the device initialization order from the reference graph
 //!    (bus parent, phandles, `*-gpios` on expanders, `kumiki,depends-on`);
-//! 4. emit Rust for a chip family ([`gen_esp32s3`]).
+//! 4. emit Rust for a chip family ([`gen_esp`]: ESP32-S3 on esp-hal, ESP32-P4
+//!    rev v1 on kumiki-p4v1-hal).
 //!
 //! v0 generates board data (constants, pin bundles, detection plan, init
 //! order). Device bring-up code still lives in the board crate; generating it
 //! from binding templates is the next step (doc/11 M3).
 
-pub mod gen_esp32s3;
+pub mod gen_esp;
 
 use std::{
     collections::{BTreeMap, HashMap},
@@ -101,6 +102,11 @@ pub struct KumikiMeta {
     /// Bring-up expression template (backend-specific placeholders).
     #[serde(default)]
     pub init: Option<String>,
+    /// Backend-specific bring-up templates (`p4v1: ...`), used instead of
+    /// `init` by that backend. Bindings whose `init` uses only portable
+    /// items (embedded-hal, kumiki drivers) need none.
+    #[serde(default, rename = "init-for")]
+    pub init_for: BTreeMap<String, String>,
     /// Presence test for `status = "fail-needs-probe"` candidates.
     #[serde(default)]
     pub probe: Option<String>,

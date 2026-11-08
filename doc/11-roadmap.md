@@ -101,6 +101,8 @@
 | M3 | v0 完了：`kumiki-dt`（前処理・構文解析・合成・phandle 解決）、3 機種の DTS（`dtc` でも警告なし）、YAML バインディング、`kumiki-dtgen`（検証・初期化順序・コード生成）。`kumiki-boards` は生成された判別関数・ピンのまとめ・定数を使う形に移行し、StopWatch で動作を確認。残り（v1）：初期化の手順そのものをバインディングのテンプレートから生成する、esp-metadata から SoC の `.dtsi` を生成する |
 | M3 v1 | 初期化の生成：バインディングの `kumiki.init` / `probe` / `gpio-pin` テンプレートを INIT_ORDER の順に展開し、機種ごとの `init` と `init_board` を生成。手書きの `init_*` を廃止。AXP2101 はレギュレータノード、AW9523 は `gpio-hog`、LCD リセットは `reset-gpios`（エキスパンダのピン）から汎用に設定。StopWatch の非公開レジスタ手順は glue ノード（`m5stack,stopwatch-power-sequence`）。second source は probe グループとして生成。3 機種すべてで動作確認済み（CoreS3 は汎用化した AXP2101 / AW9523 / エキスパンダ経由の LCD リセットで起動）。残り：esp-metadata からの `.dtsi` 生成、`Any*` の生成 |
 
+| M4 | a〜d 完了（詳細は [12](12-m4-tab5-plan.md)）：ESP32-P4 rev v1 用の自前 HAL（`kumiki-p4v1-hal`）、DSI 表示 64fps、PPA の全画面塗りつぶし 5.2ms、`FramebufferPanel` / `FbDisplay`。`tab5.dts` から `kumiki-dtgen p4v1` でボード定義を生成し、ESP32-S3 用と同じデモのソースが Tab5 でも動く（esp-hal 以外の HAL でも kumiki-dt が成り立つことを確認）。残り：ST7123 のパネル、画面の回転、present の待ちの短縮 |
+
 ### 実機で分かったこと
 
 - **AtomS3 の判別は IMU に頼らない**：手元の個体は IMU の小基板の SDA が本体とつながっておらず（内部プルダウンで Low、プルアップで High = 線が浮いている）、M5Unified でも IMU が見えなかった。M5GFX と同じくパネル ID（GC9107 の RDDID）で判別する。

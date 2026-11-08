@@ -19,6 +19,8 @@
   kumiki:
     class: backlight
     init: "AnyBacklight::Gpio(Output::new(${pin:gpios}, Level::High, OutputConfig::default()))"
+    init-for:
+      p4v1: "AnyBacklight::Gpio(Output::new(${pin:gpios}, true))"
   properties:
     gpios: { type: gpios, required: true }
     default-on: { type: boolean }
@@ -53,6 +55,18 @@
     pmic: { type: phandle, required: true }
     io-expander: { type: phandle, required: true }
     hold-cs: { type: phandle, description: "SPI controller whose CS is held high meanwhile" }
+
+# Glue for M5Stack Tab5: release the LCD / touch resets through PI4IOE5V6408
+# #1, identify the panel lot, synchronise the GT911's INT (address select).
+# Port of tab5-os tab5.rs::init.
+- compatible: "m5stack,tab5-display-power-sequence"
+  kumiki:
+    init-for:
+      p4v1: |
+        chips::tab5_display_power_on(&mut RefCellDevice::new(${busof:io-expander}), ${pin:touch-int-gpios}.degrade())?
+  properties:
+    io-expander: { type: phandle, required: true }
+    touch-int-gpios: { type: gpios, required: true }
 
 - compatible: "kumiki,board-detect"
   properties: {}

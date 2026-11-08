@@ -76,6 +76,20 @@ dt/kumiki-dtgen          p4v1 バックエンド（HAL アダプタ違い）
 
 - 残り: present の待ちを減らす（切り替えの完了を 1 フレームで判定できるか、裏バッファを 3 枚にするか）。ST7123 パネルは未対応（tab5-os でも未対応、手元の個体は ILI9881C）。
 
+### M4d 完了（2026-11-08）
+
+- **kumiki-dtgen に P4 v1 の出力を追加した**（`kumiki-dtgen p4v1`）。生成器は `gen_esp.rs` にまとめ、`Backend::{Esp32s3, P4v1}` で次の点だけを切り替える。
+  - 生成器自身が書く HAL 呼び出し: ピンのまとめ（`$p.GPIOn` / `$p.pins.gpioN`）、判別のプローブ、`init` の引数、`Delay`
+  - バインディングのテンプレートの選び方: `kumiki.init-for.<backend>` があればそれを、なければ `init` を使う。embedded-hal と kumiki のドライバだけで書いたテンプレート（BMI270、GT911、touch-keys など）は両方の HAL で共通になる。
+- `boards/dts/soc/espressif/esp32p4v1.dtsi`（手書き）と `boards/dts/m5stack/tab5.dts` を追加した。
+  - GT911 のアドレス（INT の状態で 0x14 / 0x5D が決まる）は、second source の probe グループとして書いた。
+  - IO エキスパンダの電源投入とパネルのロット判別は、glue ノード（`m5stack,tab5-display-power-sequence`）にした。中身は tab5-os の手順のままで、エキスパンダ #2（電源を切る線がある）には書き込まない。
+  - ST7123 / ST7121 のロットは未対応。glue が `InitError::UnsupportedPanel` を返す。
+- `kumiki-boards` に `chip-p4v1` を追加した。`p4v1/generated.rs` が生成物で、`Devices` と `Any*` の形は ESP32-S3 の家族と同じ。
+- **同じアプリが両方の HAL で動く**: kumiki-demo の本体を `firmware/kumiki-demo/src/app.rs` に切り出し、ESP32-S3 用（`kumiki-demo`）と Tab5 用（`firmware-p4/kumiki-tab5-boards`）の両方で同じソースをビルドする。
+  - 違いは入口の数行（HAL の初期化、`println!`、時刻と待ち）だけ。
+  - Tab5 での結果: `detected M5Stack Tab5 (touch: GT911, imu: true, power: false)`。タッチの読み出しはエラー 0。
+
 ## 書き込みについて
 
 - Tab5 に書き込むと、いま入っている tab5-os のカーネル（0x10000）が上書きされる。tab5-os の `make flash-p4` で戻せる。

@@ -6,6 +6,7 @@
 
 use esp_hal::peripherals::Peripherals;
 
+
 /// A GPIO as described in the device tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Gpio {
@@ -46,6 +47,7 @@ impl DetectLog {
 mod prelude {
     pub use core::cell::RefCell;
     pub use embedded_graphics_core::{draw_target::DrawTarget, geometry::Size, pixelcolor::{Rgb565, RgbColor}};
+    pub use embedded_hal::delay::DelayNs as _;
     pub use embedded_hal_bus::i2c::RefCellDevice;
     pub use esp_hal::{
         delay::Delay,
@@ -763,7 +765,7 @@ pub mod stopwatch {
                     found = Some(AnyTouch::Cst9217(chips::Cst9217 { i2c: RefCellDevice::new(i2c1) }));
                     break;
                 }
-                delay.delay_millis(10);
+                delay.delay_ms(10);
             }
             found
         };

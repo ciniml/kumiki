@@ -43,7 +43,35 @@
     gpio-controller: { type: boolean, required: true }
     "#gpio-cells": { type: int, required: true }
 
+- compatible: "diodes,pi4ioe5v6408"
+  # Lines are set by board glue (Tab5: m5stack,tab5-display-power-sequence).
+  kumiki: { bus: i2c, class: gpio-expander, init: "()" }
+  properties:
+    reg: { type: int, required: true }
+    gpio-controller: { type: boolean, required: true }
+    "#gpio-cells": { type: int, required: true }
+
 # ---- displays ------------------------------------------------------------------
+- compatible: "ilitek,ili9881c"
+  kumiki:
+    bus: dsi
+    class: display
+    init-for:
+      # Two frame buffers at the top of PSRAM; double-buffered FbDisplay.
+      p4v1: |
+        {
+            let fbs = bind::dsi_frame_buffers(psram).ok_or(InitError::Config)?;
+            let dsi = Dsi::init(kumiki_p4v1_hal::dsi::Panel::Ili9881c, fbs[0]).map_err(|_| InitError::Display)?;
+            AnyDisplay::${variant}(FbDisplay::new(DsiPanel::new(dsi, fbs)))
+        }
+    variant: Ili9881c
+  properties:
+    reg: { type: int, required: true }
+    backlight: { type: phandle }
+    width: { type: int, required: true }
+    height: { type: int, required: true }
+    kumiki,frame-buffer: { type: string, description: "where the scan-out frame buffers live (psram)" }
+
 - compatible: "ilitek,ili9342c"
   kumiki:
     bus: spi
@@ -149,6 +177,14 @@
     class: touch
     probe: "embedded_hal::i2c::I2c::write(&mut RefCellDevice::new(${bus}), ${const:ADDR}, &[0xD0, 0x00]).is_ok()"
     init: "AnyTouch::Cst9217(chips::Cst9217 { i2c: RefCellDevice::new(${bus}) })"
+  properties: *touch
+
+- compatible: "goodix,gt911"
+  kumiki:
+    bus: i2c
+    class: touch
+    probe: "embedded_hal::i2c::I2c::write(&mut RefCellDevice::new(${bus}), ${const:ADDR}, &[]).is_ok()"
+    init: "AnyTouch::Gt911(chips::Gt911 { i2c: RefCellDevice::new(${bus}), addr: ${const:ADDR} })"
   properties: *touch
 
 # ---- sensors -----------------------------------------------------------------------

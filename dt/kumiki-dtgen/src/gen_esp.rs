@@ -1,4 +1,8 @@
-//! Code generation for the ESP32-S3 family (esp-hal).
+//! Code generation for Espressif chip families: ESP32-S3 on esp-hal
+//! ([`Backend::Esp32s3`]) and ESP32-P4 rev v1 on kumiki-p4v1-hal
+//! ([`Backend::P4v1`]). The two differ only in the HAL calls the generator
+//! itself writes (pin bundles, probes, the `init` signature) and in which
+//! binding template is used (`init-for.<backend>`, else `init`).
 //!
 //! Output (one file for all boards of the family):
 //! * shared types (`Gpio`, `BoardId`, `DetectLog`);
@@ -14,8 +18,87 @@ use kumiki_dt::{Cell, Node, Tree, Value};
 
 use crate::{chip_pins, gpios, init_order, is_present, Binding, Bindings, Board, Error, Gpio, PropType};
 
+/// Target chip family / HAL.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Backend {
+    /// ESP32-S3, esp-hal.
+    Esp32s3,
+    /// ESP32-P4 chip revision v1.x, kumiki-p4v1-hal.
+    P4v1,
+}
+
+impl Backend {
+    /// Key of this backend in a binding's `init-for`.
+    pub fn key(self) -> &'static str {
+        match self {
+            Backend::Esp32s3 => "esp32s3",
+            Backend::P4v1 => "p4v1",
+        }
+    }
+
+    fn prelude(self) -> &'static str {
+        match self {
+            Backend::Esp32s3 => PRELUDE,
+            Backend::P4v1 => PRELUDE_P4V1,
+        }
+    }
+
+    /// `$p.<pin>` in the `take_pins_*!` macro, and the field type.
+    fn pin_take(self, pin: u32) -> String {
+        match self {
+            Backend::Esp32s3 => format!("$p.GPIO{pin}"),
+            Backend::P4v1 => format!("$p.pins.gpio{pin}"),
+        }
+    }
+    fn pin_type(self, pin: u32) -> String {
+        match self {
+            Backend::Esp32s3 => format!("esp_hal::peripherals::GPIO{pin}<'static>"),
+            Backend::P4v1 => format!("kumiki_p4v1_hal::gpio::Pin<{pin}>"),
+        }
+    }
+    fn output_high(self, pin: &str) -> String {
+        match self {
+            Backend::Esp32s3 => format!("Output::new({pin}, Level::High, OutputConfig::default())"),
+            Backend::P4v1 => format!("Output::new({pin}, true)"),
+        }
+    }
+    fn input_pullup(self, pin: &str) -> String {
+        match self {
+            Backend::Esp32s3 => format!("Input::new({pin}, InputConfig::default().with_pull(Pull::Up))"),
+            Backend::P4v1 => format!("Input::new({pin}, Pull::Up)"),
+        }
+    }
+    fn peripherals(self) -> &'static str {
+        match self {
+            Backend::Esp32s3 => "esp_hal::peripherals::Peripherals",
+            Backend::P4v1 => "kumiki_p4v1_hal::Peripherals",
+        }
+    }
+    /// Extra arguments of the generated `init` (after `p`): parameters, call.
+    fn init_args(self) -> (&'static str, &'static str) {
+        match self {
+            Backend::Esp32s3 => (", buf_a: DmaTxBuf, buf_b: DmaTxBuf", ", buf_a, buf_b"),
+            Backend::P4v1 => (", psram: (usize, usize)", ", psram"),
+        }
+    }
+    fn init_args_dispatch(self) -> &'static str {
+        match self {
+            Backend::Esp32s3 => ", buf_a: prelude::DmaTxBuf, buf_b: prelude::DmaTxBuf",
+            Backend::P4v1 => ", psram: (usize, usize)",
+        }
+    }
+    fn delay_new(self) -> &'static str {
+        match self {
+            Backend::Esp32s3 => "Delay::new()",
+            Backend::P4v1 => "Delay",
+        }
+    }
+}
+
 /// Generator options.
 pub struct Options {
+    /// Target family / HAL.
+    pub backend: Backend,
     /// Rust path of the generated module inside its crate, used by the
     /// exported macros (e.g. `$crate::esp32s3::generated`).
     pub module_path: String,
@@ -29,6 +112,7 @@ pub struct Options {
 const PRELUDE: &str = r#"mod prelude {
     pub use core::cell::RefCell;
     pub use embedded_graphics_core::{draw_target::DrawTarget, geometry::Size, pixelcolor::{Rgb565, RgbColor}};
+    pub use embedded_hal::delay::DelayNs as _;
     pub use embedded_hal_bus::i2c::RefCellDevice;
     pub use esp_hal::{
         delay::Delay,
@@ -51,12 +135,41 @@ const PRELUDE: &str = r#"mod prelude {
 }
 "#;
 
+/// [`PRELUDE`] for the ESP32-P4 rev v1 family.
+const PRELUDE_P4V1: &str = r#"mod prelude {
+    #![allow(unused_imports)]
+    pub use core::cell::RefCell;
+    pub use embedded_hal::delay::DelayNs as _;
+    pub use embedded_hal_bus::i2c::RefCellDevice;
+    pub use kumiki_gfx::FbDisplay;
+    pub use kumiki_p4v1_hal::{
+        Peripherals,
+        dsi::Dsi,
+        fb::DsiPanel,
+        gpio::{Input, Output, Pull},
+        i2c::I2c,
+        time::Delay,
+    };
+    pub use static_cell::StaticCell;
+    pub use super::super::{
+        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
+        Spare,
+    };
+}
+"#;
+
 // ---- template expansion ---------------------------------------------------------
 
 struct Ctx<'a> {
     board: &'a Board,
     bindings: &'a Bindings,
     path: String,
+    backend: Backend,
+}
+
+/// The template `backend` uses for `b`: `init-for.<key>`, else `init`.
+fn init_template(b: &Binding, backend: Backend) -> Option<&str> {
+    b.kumiki.init_for.get(backend.key()).or(b.kumiki.init.as_ref()).map(String::as_str)
 }
 
 impl Ctx<'_> {
@@ -153,7 +266,8 @@ impl Ctx<'_> {
                 format!("SpiHost::{}{}", &inst[..1], inst[1..].to_lowercase())
             }
             "pin" => self.pin(arg)?,
-            "pinref" => format!("{}.reborrow()", self.pin(arg)?),
+            "pinref" if self.backend == Backend::Esp32s3 => format!("{}.reborrow()", self.pin(arg)?),
+            "pinref" => return Err(self.err("${pinref} is esp-hal only")),
             "bus" => self.bus_of(&self.path)?,
             "busof" => {
                 let p = me.prop(arg).ok_or_else(|| self.err(format!("missing {arg}")))?;
@@ -171,12 +285,12 @@ impl Ctx<'_> {
                 None => String::new(),
                 Some(p) => match gpios(tree, p)?.first() {
                     Some(Gpio::Chip { .. }) => format!(
-                        "{{ let mut rst = Output::new({}, Level::High, OutputConfig::default()); bind::reset_pulse(&mut rst, &mut delay); core::mem::forget(rst); }}",
-                        self.pin("reset-gpios")?
+                        "{{ let mut rst = {}; bind::reset_pulse(&mut rst, &mut delay); core::mem::forget(rst); }}",
+                        self.backend.output_high(&self.pin("reset-gpios")?)
                     ),
                     Some(Gpio::Expander { controller, pin, .. }) => {
                         let cpath = tree.resolve(controller).ok_or_else(|| self.err("unresolved reset controller"))?;
-                        let cctx = Ctx { board: self.board, bindings: self.bindings, path: cpath.clone() };
+                        let cctx = Ctx { board: self.board, bindings: self.bindings, path: cpath.clone(), backend: self.backend };
                         let cb = self.bindings.for_node(self.node(&cpath)).ok_or_else(|| self.err("controller has no binding"))?;
                         let tpl = cb.kumiki.gpio_pin.as_deref().ok_or_else(|| self.err("controller binding has no gpio-pin"))?;
                         let expr = cctx.expand(&tpl.replace("${line}", &pin.to_string()))?;
@@ -245,7 +359,7 @@ impl Ctx<'_> {
                 match (kind, child) {
                     (_, Some(c)) => {
                         let field = crate::pin_field(tree, &self.path, &format!("{}-gpios", c.name), 0, 1);
-                        let input = format!("Input::new(pins.{field}, InputConfig::default().with_pull(Pull::Up))");
+                        let input = self.backend.input_pullup(&format!("pins.{field}"));
                         if kind == "optkeypin" { format!("Some({input})") } else { input }
                     }
                     ("optkeypin", None) => "None".into(),
@@ -286,7 +400,7 @@ fn chosen_refs(tree: &Tree, name: &str) -> Vec<String> {
 }
 
 /// Emit `pub fn init(…)` for one board (inside its module).
-fn emit_init(out: &mut String, board: &Board, bindings: &Bindings) -> Result<(), Error> {
+fn emit_init(out: &mut String, board: &Board, bindings: &Bindings, backend: Backend) -> Result<(), Error> {
     let tree = &board.tree;
     let order = init_order(board)?;
     let path_of = |l: &str| -> String {
@@ -301,10 +415,10 @@ fn emit_init(out: &mut String, board: &Board, bindings: &Bindings) -> Result<(),
     writeln!(out, "\n    /// Bring the board up in `INIT_ORDER` (generated from the binding templates).").unwrap();
     writeln!(out, "    #[inline(never)]").unwrap();
     writeln!(out, "    #[allow(unused_variables, unused_mut, unused_braces, clippy::let_unit_value)]").unwrap();
-    writeln!(out, "    pub fn init(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devices, InitError> {{").unwrap();
+    writeln!(out, "    pub fn init(p: Peripherals{}) -> Result<Devices, InitError> {{", backend.init_args().0).unwrap();
     writeln!(out, "        let mut pins = take_pins_{}!(p);", board.module).unwrap();
     writeln!(out, "        let spare = take_spare!(p);").unwrap();
-    writeln!(out, "        let mut delay = Delay::new();").unwrap();
+    writeln!(out, "        let mut delay = {};", backend.delay_new()).unwrap();
     let mut groups_done: Vec<String> = Vec::new();
     for l in &order {
         let path = path_of(l);
@@ -325,18 +439,18 @@ fn emit_init(out: &mut String, board: &Board, bindings: &Bindings) -> Result<(),
             writeln!(out, "        // probe group `{group}`: first candidate that answers (retried for slow starters)").unwrap();
             writeln!(out, "        let {group}_group = {{\n            let mut found = None;\n            for _ in 0..8 {{").unwrap();
             for m in &members {
-                let ctx = Ctx { board, bindings, path: m.clone() };
+                let ctx = Ctx { board, bindings, path: m.clone(), backend };
                 let mb = bindings.for_node(tree.node(m).unwrap()).unwrap();
                 let probe = mb.kumiki.probe.as_deref().ok_or_else(|| ctx.err("candidate binding has no probe"))?;
-                let init = mb.kumiki.init.as_deref().ok_or_else(|| ctx.err("binding has no init"))?;
+                let init = init_template(mb, backend).ok_or_else(|| ctx.err("binding has no init"))?;
                 writeln!(out, "                if {} {{", ctx.expand(probe)?).unwrap();
                 writeln!(out, "                    found = Some({});\n                    break;\n                }}", ctx.expand(init.trim())?).unwrap();
             }
-            writeln!(out, "                delay.delay_millis(10);\n            }}\n            found\n        }};").unwrap();
+            writeln!(out, "                delay.delay_ms(10);\n            }}\n            found\n        }};").unwrap();
             continue;
         }
-        let ctx = Ctx { board, bindings, path: path.clone() };
-        let tpl = b.kumiki.init.as_deref().ok_or_else(|| ctx.err(format!("binding {} has no init template", b.compatible)))?;
+        let ctx = Ctx { board, bindings, path: path.clone(), backend };
+        let tpl = init_template(b, backend).ok_or_else(|| ctx.err(format!("binding {} has no init template", b.compatible)))?;
         let code = ctx.expand(tpl.trim())?;
         let code = code.replace('\n', "\n        ");
         writeln!(out, "        // {path} ({})", b.compatible).unwrap();
@@ -512,7 +626,7 @@ fn emit_node(out: &mut String, tree: &Tree, path: &str, n: &Node, b: &Binding) -
 }
 
 /// Detection code for one board (body of an `if candidate { … }`).
-fn emit_detect(out: &mut String, board: &Board) -> Result<(), Error> {
+fn emit_detect(out: &mut String, board: &Board, backend: Backend) -> Result<(), Error> {
     let tree = &board.tree;
     let Some(det) = tree.root.children.iter().find(|c| c.compatible().contains(&"kumiki,board-detect")) else {
         return Err(Error(format!("{}: no kumiki,detect node", board.source.display())));
@@ -550,12 +664,20 @@ fn emit_detect(out: &mut String, board: &Board) -> Result<(), Error> {
             let inst = bus.prop("kumiki,instance").and_then(|p| p.str()).unwrap_or("I2C0");
             let (sda, scl) = (chip_pin(bus, "sda-gpios")?, chip_pin(bus, "scl-gpios")?);
             writeln!(out, "        if ok {{").unwrap();
-            writeln!(out, "            super::probe::i2c_bus_recover(p.GPIO{scl}.reborrow(), p.GPIO{sda}.reborrow());").unwrap();
-            writeln!(
-                out,
-                "            let v = super::probe::i2c_read_reg(p.{inst}.reborrow(), p.GPIO{sda}.reborrow(), p.GPIO{scl}.reborrow(), {addr:#04x}, {reg:#04x});"
-            )
-            .unwrap();
+            match backend {
+                Backend::Esp32s3 => {
+                    writeln!(out, "            super::probe::i2c_bus_recover(p.GPIO{scl}.reborrow(), p.GPIO{sda}.reborrow());").unwrap();
+                    writeln!(
+                        out,
+                        "            let v = super::probe::i2c_read_reg(p.{inst}.reborrow(), p.GPIO{sda}.reborrow(), p.GPIO{scl}.reborrow(), {addr:#04x}, {reg:#04x});"
+                    )
+                    .unwrap();
+                }
+                Backend::P4v1 => {
+                    // Peripherals are only borrowed: the probe works on stolen handles.
+                    writeln!(out, "            let v = super::probe::i2c_read_reg(p, {inst:?}, {sda}, {scl}, {addr:#04x}, {reg:#04x});").unwrap();
+                }
+            }
             writeln!(out, "            log.push({model:?}, {pname:?}, v.map(|b| [b, 0, 0]), 1);").unwrap();
             if comp.contains(&"kumiki,probe-i2c-reg") {
                 let expect = probe.prop("expect").and_then(|p| p.u32()).unwrap_or(0);
@@ -564,7 +686,7 @@ fn emit_detect(out: &mut String, board: &Board) -> Result<(), Error> {
                 writeln!(out, "            ok = v.is_some();").unwrap();
             }
             writeln!(out, "        }}").unwrap();
-        } else if comp.contains(&"kumiki,probe-dcs-id-3wire") {
+        } else if comp.contains(&"kumiki,probe-dcs-id-3wire") && backend == Backend::Esp32s3 {
             let disp_path = target_path("display")?;
             let disp = tree.node(&disp_path).unwrap();
             let spi = tree.node(&Tree::parent_path(&disp_path).unwrap()).unwrap();
@@ -610,7 +732,11 @@ pub fn generate(boards: &[Board], bindings: &Bindings, opt: &Options) -> Result<
     out.push_str(
         r#"#![allow(dead_code, clippy::all, missing_docs)]
 
-use esp_hal::peripherals::Peripherals;
+"#,
+    );
+    writeln!(out, "use {};", opt.backend.peripherals()).unwrap();
+    out.push_str(
+        r#"
 
 /// A GPIO as described in the device tree.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -651,7 +777,7 @@ impl DetectLog {
 
 "#,
     );
-    out.push_str(PRELUDE);
+    out.push_str(opt.backend.prelude());
     out.push('\n');
     // Board ids.
     writeln!(out, "/// Boards of this family, in detection order.").unwrap();
@@ -685,7 +811,7 @@ impl DetectLog {
             "    if {m}::CANDIDATE && !(octal_psram && {m}::USES_OCTAL_PSRAM_PINS) && (psram || !{m}::NEEDS_PSRAM) {{\n        let mut ok = true;"
         )
         .unwrap();
-        emit_detect(&mut out, b)?;
+        emit_detect(&mut out, b, opt.backend)?;
         writeln!(out, "        if ok {{\n            return Ok(BoardId::{});\n        }}\n    }}", variant_of(b.model())).unwrap();
     }
     writeln!(out, "    Err(log)\n}}\n").unwrap();
@@ -696,7 +822,7 @@ impl DetectLog {
         writeln!(out, "/// Move the chip GPIOs used by {} out of `Peripherals`.", b.model()).unwrap();
         writeln!(out, "macro_rules! take_pins_{} {{\n    ($p:ident) => {{\n        {}::{}::Pins {{", b.module, opt.module_path, b.module).unwrap();
         for (field, pin) in &pins {
-            writeln!(out, "            {field}: $p.GPIO{pin},").unwrap();
+            writeln!(out, "            {field}: {},", opt.backend.pin_take(*pin)).unwrap();
         }
         writeln!(out, "        }}\n    }};\n}}\n").unwrap();
     }
@@ -739,7 +865,7 @@ impl DetectLog {
         writeln!(out, "\n    /// Chip GPIOs used by the board (see `take_pins_{}!`).", b.module).unwrap();
         writeln!(out, "    pub struct Pins {{").unwrap();
         for (field, pin) in &pins {
-            writeln!(out, "        pub {field}: esp_hal::peripherals::GPIO{pin}<'static>,").unwrap();
+            writeln!(out, "        pub {field}: {},", opt.backend.pin_type(*pin)).unwrap();
         }
         writeln!(out, "    }}\n").unwrap();
         let mut res = Ok(());
@@ -755,18 +881,19 @@ impl DetectLog {
             res = emit_node(&mut out, tree, path, n, binding);
         });
         res?;
-        emit_init(&mut out, b, bindings)?;
+        emit_init(&mut out, b, bindings, opt.backend)?;
         writeln!(out, "}}\n").unwrap();
     }
     // Dispatch.
     writeln!(out, "/// Bring up the detected board.").unwrap();
     writeln!(
         out,
-        "pub fn init_board(id: BoardId, p: Peripherals, buf_a: prelude::DmaTxBuf, buf_b: prelude::DmaTxBuf) -> Result<prelude::Devices, prelude::InitError> {{\n    match id {{"
+        "pub fn init_board(id: BoardId, p: Peripherals{}) -> Result<prelude::Devices, prelude::InitError> {{\n    match id {{",
+        opt.backend.init_args_dispatch()
     )
     .unwrap();
     for b in boards {
-        writeln!(out, "        BoardId::{} => {}::init(p, buf_a, buf_b),", variant_of(b.model()), b.module).unwrap();
+        writeln!(out, "        BoardId::{} => {}::init(p{}),", variant_of(b.model()), b.module, opt.backend.init_args().1).unwrap();
     }
     writeln!(out, "    }}\n}}").unwrap();
     // Trim the final blank line for a stable file ending.

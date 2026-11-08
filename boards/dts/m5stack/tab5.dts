@@ -1,0 +1,114 @@
+/*
+ * M5Stack Tab5 (ESP32-P4 rev v1.0, 5" 720x1280 MIPI-DSI LCD).
+ * Sources: https://docs.m5stack.com/en/core/Tab5 ,
+ *          tab5-os doc/06-tab5-hardware.md and kernel/src/platform/esp32p4v1/tab5.rs
+ *          (bring-up verified on this board), M5GFX (MIT).
+ *
+ * Panel lots: ILI9881C + GT911 touch (this unit). The ST7123 / ST7121 lots
+ * (display and touch in one chip at 0x55) are not supported yet; the power
+ * sequence reports them as InitError::UnsupportedPanel.
+ */
+/dts-v1/;
+
+#include <soc/espressif/esp32p4v1.dtsi>
+#include <kumiki/gpio.h>
+
+/ {
+	model = "M5Stack Tab5";
+	compatible = "m5stack,tab5", "espressif,esp32p4";
+
+	chosen {
+		kumiki,display = &lcd;
+		kumiki,touch = &touch_gt911_14, &touch_gt911_5d;
+		kumiki,imu = &imu;
+	};
+
+	lcd_backlight: backlight {
+		compatible = "gpio-backlight";
+		gpios = <&gpio 22 GPIO_ACTIVE_HIGH>;
+		default-on;
+	};
+
+	/* No front buttons: a touch acts as button A. */
+	buttons {
+		compatible = "kumiki,touch-keys";
+		touch = <&touch_gt911_14>;
+	};
+
+	/* Glue: the IO-expander sequence that releases the LCD and touch resets,
+	 * tells the panel lot by its touch controller and synchronises the
+	 * GT911's INT line (port of tab5-os tab5.rs::init). */
+	display_power: display-power-sequence {
+		compatible = "m5stack,tab5-display-power-sequence";
+		io-expander = <&ioexp1>;
+		touch-int-gpios = <&gpio 23 GPIO_ACTIVE_HIGH>;
+	};
+
+	kumiki,detect {
+		compatible = "kumiki,board-detect";
+		ioexp-ack {
+			compatible = "kumiki,probe-i2c-ack";
+			device = <&ioexp1>;
+			register = <0x01>;
+		};
+	};
+};
+
+&i2c1 {
+	status = "okay";
+	clock-frequency = <100000>;
+	sda-gpios = <&gpio 31 GPIO_ACTIVE_HIGH>;
+	scl-gpios = <&gpio 32 GPIO_ACTIVE_HIGH>;
+
+	/* Expander #1: EXT5V_EN, CAM_RST, LCD_RST (bit 4), TP_RST (bit 5), SPK_EN, HP_DET. */
+	ioexp1: gpio@43 {
+		compatible = "diodes,pi4ioe5v6408";
+		reg = <0x43>;
+		gpio-controller;
+		#gpio-cells = <2>;
+	};
+
+	/* Expander #2: bit 4 cuts the board's power. Never written. */
+	ioexp2: gpio@44 {
+		compatible = "diodes,pi4ioe5v6408";
+		reg = <0x44>;
+		gpio-controller;
+		#gpio-cells = <2>;
+	};
+
+	/* The GT911's address follows INT at reset: second-source candidates. */
+	touch_gt911_14: touchscreen@14 {
+		compatible = "goodix,gt911";
+		reg = <0x14>;
+		status = "fail-needs-probe";
+		kumiki,probe-group = "touch";
+		kumiki,depends-on = <&display_power>;
+	};
+
+	touch_gt911_5d: touchscreen@5d {
+		compatible = "goodix,gt911";
+		reg = <0x5d>;
+		status = "fail-needs-probe";
+		kumiki,probe-group = "touch";
+		kumiki,depends-on = <&display_power>;
+	};
+
+	imu: imu@68 {
+		compatible = "bosch,bmi270";
+		reg = <0x68>;
+	};
+};
+
+&dsi {
+	status = "okay";
+
+	lcd: panel@0 {
+		compatible = "ilitek,ili9881c";
+		reg = <0>;
+		kumiki,depends-on = <&display_power>; /* resets come from the IO expander */
+		backlight = <&lcd_backlight>;
+		width = <720>;
+		height = <1280>;
+		kumiki,frame-buffer = "psram";
+	};
+};

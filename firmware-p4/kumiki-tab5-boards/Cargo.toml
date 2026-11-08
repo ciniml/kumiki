@@ -1,0 +1,22 @@
+[package]
+name = "kumiki-tab5-boards"
+description = "M4d: the kumiki-demo app (firmware/kumiki-demo/src/app.rs) on the Tab5, with the board brought up from tab5.dts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "kumiki-tab5-boards"
+test = false
+bench = false
+
+[dependencies]
+kumiki-boards = { path = "../../boards/kumiki-boards", features = ["chip-p4v1"] }
+kumiki-p4v1-hal = { path = "../../hal/kumiki-p4v1-hal", features = ["gfx"] }
+kumiki-gfx = { path = "../../gfx/kumiki-gfx" }
+kumiki-class = { path = "../../dt/kumiki-class" }
+embedded-graphics = "0.8"

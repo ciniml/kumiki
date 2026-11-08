@@ -42,6 +42,27 @@ pub trait Instance: sealed::Sealed {
     fn enable_clock(&self);
 }
 
+impl I2c0 {
+    /// The controller token without taking [`Peripherals`](crate::Peripherals).
+    ///
+    /// # Safety
+    /// Nothing else may use the controller meanwhile (e.g. a short probe
+    /// before the real driver is set up).
+    pub unsafe fn steal() -> Self {
+        I2c0(())
+    }
+}
+
+impl I2c1 {
+    /// The controller token without taking [`Peripherals`](crate::Peripherals).
+    ///
+    /// # Safety
+    /// See [`I2c0::steal`].
+    pub unsafe fn steal() -> Self {
+        I2c1(())
+    }
+}
+
 mod sealed {
     pub trait Sealed {}
     impl Sealed for super::I2c0 {}
