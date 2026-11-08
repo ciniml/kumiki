@@ -61,6 +61,16 @@ pub trait Backlight {
     fn set_brightness(&mut self, level: u8) -> Result<(), Self::Error>;
 }
 
+/// A backlight that is only switched on and off by a GPIO.
+pub struct GpioBacklight<P>(pub P);
+
+impl<P: embedded_hal::digital::OutputPin> Backlight for GpioBacklight<P> {
+    type Error = P::Error;
+    fn set_brightness(&mut self, level: u8) -> Result<(), P::Error> {
+        if level > 0 { self.0.set_high() } else { self.0.set_low() }
+    }
+}
+
 /// Battery / power information.
 pub trait Power {
     /// Error type.

@@ -712,6 +712,110 @@ fn emit_detect(out: &mut String, board: &Board, backend: Backend) -> Result<(), 
     Ok(())
 }
 
+/// Device classes that get an `Any<Class>` enum, with the enum name.
+const ANY_CLASSES: &[(&str, &str, &str)] = &[
+    ("display", "AnyDisplay", "Display"),
+    ("touch", "AnyTouch", "Touch panel"),
+    ("imu", "AnyImu", "IMU"),
+    ("power", "AnyPower", "Power / battery information"),
+    ("backlight", "AnyBacklight", "Backlight"),
+];
+
+/// Emit the `Any<Class>` enums: one variant per binding `kumiki.variant`
+/// found on the family's boards, holding `kumiki.type`. Each enum gets
+/// `name()` and a dispatch macro `any_<class>!(value, v => expr)` (plus
+/// `, none => expr` when there is a unit variant) for the hand-written trait
+/// impls, so adding a device needs no edit there.
+fn emit_any(out: &mut String, boards: &[Board], bindings: &Bindings, opt: &Options) -> Result<(), Error> {
+    struct Var {
+        name: String,
+        ty: Option<String>,
+        compatible: String,
+        boards: Vec<String>,
+    }
+    writeln!(out, "use super::*;\n").unwrap();
+    for (class, enum_name, doc) in ANY_CLASSES {
+        let mut vars: Vec<Var> = Vec::new();
+        for b in boards {
+            b.tree.root.walk("/", &mut |path, n| {
+                if path == "/" || !is_present(n) {
+                    return;
+                }
+                let Some(bd) = bindings.for_node(n) else { return };
+                if bd.kumiki.class.as_deref() != Some(class) {
+                    return;
+                }
+                let Some(v) = bd.kumiki.variant.clone() else { return };
+                let ty = bd.kumiki.ty_for.get(opt.backend.key()).or(bd.kumiki.ty.as_ref()).cloned();
+                match vars.iter_mut().find(|x| x.name == v) {
+                    Some(x) => {
+                        if !x.boards.contains(&b.model().to_string()) {
+                            x.boards.push(b.model().to_string());
+                        }
+                    }
+                    None => vars.push(Var { name: v, ty, compatible: bd.compatible.clone(), boards: vec![b.model().to_string()] }),
+                }
+            });
+        }
+        // The generated `init` falls back to `AnyBacklight::None`.
+        if *class == "backlight" && !vars.iter().any(|v| v.name == "None") {
+            vars.push(Var { name: "None".into(), ty: None, compatible: String::new(), boards: Vec::new() });
+        }
+        if let Some(v) = vars.iter().find(|v| v.ty.is_none() && v.name != "None") {
+            return Err(Error(format!("binding {}: variant {} has no kumiki.type", v.compatible, v.name)));
+        }
+        writeln!(out, "/// {doc} of any board in this family (generated from the bindings).").unwrap();
+        writeln!(out, "pub enum {enum_name} {{").unwrap();
+        for v in &vars {
+            match &v.ty {
+                Some(t) => {
+                    writeln!(out, "    /// `{}` ({}).\n    {}({t}),", v.compatible, v.boards.join(", "), v.name).unwrap();
+                }
+                None => writeln!(out, "    /// Not controllable.\n    {},", v.name).unwrap(),
+            }
+        }
+        writeln!(out, "}}\n").unwrap();
+        // name(): the part number from the compatible.
+        writeln!(out, "impl {enum_name} {{\n    /// Device part number (from the compatible).\n    pub fn name(&self) -> &'static str {{").unwrap();
+        if vars.is_empty() {
+            writeln!(out, "        match *self {{}}").unwrap();
+        } else {
+            writeln!(out, "        match self {{").unwrap();
+            for v in &vars {
+                let part = v.compatible.split(',').nth(1).unwrap_or("none").to_uppercase();
+                let pat = if v.ty.is_some() { format!("{enum_name}::{}(_)", v.name) } else { format!("{enum_name}::{}", v.name) };
+                writeln!(out, "            {pat} => {part:?},").unwrap();
+            }
+            writeln!(out, "        }}").unwrap();
+        }
+        writeln!(out, "    }}\n}}\n").unwrap();
+        // Dispatch macro.
+        let mac = format!("any_{class}");
+        let has_unit = vars.iter().any(|v| v.ty.is_none());
+        writeln!(out, "/// `{mac}!(value, v => expr{})`: `expr` for every variant of [`{enum_name}`].", if has_unit { ", none => expr" } else { "" }).unwrap();
+        writeln!(out, "#[allow(unused_macros)]\nmacro_rules! {mac} {{").unwrap();
+        let path = format!("{}::{enum_name}", opt.module_path);
+        if has_unit {
+            writeln!(out, "    ($s:expr, $v:ident => $e:expr, none => $n:expr) => {{\n        match $s {{").unwrap();
+        } else {
+            writeln!(out, "    ($s:expr, $v:ident => $e:expr) => {{\n        match $s {{").unwrap();
+        }
+        if vars.is_empty() {
+            // `$s` is a reference; an empty enum needs the place itself.
+            out.truncate(out.len() - "        match $s {\n".len());
+            writeln!(out, "        match *$s {{").unwrap();
+        }
+        for v in &vars {
+            match v.ty {
+                Some(_) => writeln!(out, "            {path}::{}($v) => $e,", v.name).unwrap(),
+                None => writeln!(out, "            {path}::{} => $n,", v.name).unwrap(),
+            }
+        }
+        writeln!(out, "        }}\n    }};\n}}\n").unwrap();
+    }
+    Ok(())
+}
+
 /// Generate the family module.
 pub fn generate(boards: &[Board], bindings: &Bindings, opt: &Options) -> Result<String, Error> {
     let mut problems = Vec::new();
@@ -779,6 +883,7 @@ impl DetectLog {
     );
     out.push_str(opt.backend.prelude());
     out.push('\n');
+    emit_any(&mut out, boards, bindings, opt)?;
     // Board ids.
     writeln!(out, "/// Boards of this family, in detection order.").unwrap();
     writeln!(out, "#[derive(Clone, Copy, Debug, PartialEq, Eq)]\npub enum BoardId {{").unwrap();

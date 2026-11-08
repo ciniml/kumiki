@@ -13,3 +13,4 @@ include = ["src/**", "vendor/bmi270.c", "Cargo.toml"]
 [dependencies]
 embedded-hal.workspace = true
 embedded-hal-async.workspace = true
+kumiki-class.workspace = true

@@ -69,6 +69,161 @@ mod prelude {
     };
 }
 
+use super::*;
+
+/// Display of any board in this family (generated from the bindings).
+pub enum AnyDisplay {
+    /// `ilitek,ili9342c` (M5Stack CoreS3).
+    Ili9342c(Ili9342cDisplay),
+    /// `galaxycore,gc9107` (M5Stack AtomS3).
+    Gc9107(Gc9107Display),
+    /// `chipone,co5300` (M5Stack StopWatch).
+    Co5300(Co5300Display),
+}
+
+impl AnyDisplay {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match self {
+            AnyDisplay::Ili9342c(_) => "ILI9342C",
+            AnyDisplay::Gc9107(_) => "GC9107",
+            AnyDisplay::Co5300(_) => "CO5300",
+        }
+    }
+}
+
+/// `any_display!(value, v => expr)`: `expr` for every variant of [`AnyDisplay`].
+#[allow(unused_macros)]
+macro_rules! any_display {
+    ($s:expr, $v:ident => $e:expr) => {
+        match $s {
+            $crate::esp32s3::generated::AnyDisplay::Ili9342c($v) => $e,
+            $crate::esp32s3::generated::AnyDisplay::Gc9107($v) => $e,
+            $crate::esp32s3::generated::AnyDisplay::Co5300($v) => $e,
+        }
+    };
+}
+
+/// Touch panel of any board in this family (generated from the bindings).
+pub enum AnyTouch {
+    /// `focaltech,ft6336u` (M5Stack CoreS3).
+    Ft6336(chips::Ft6336<SharedI2c>),
+    /// `hynitron,cst820` (M5Stack StopWatch).
+    Cst820(chips::Cst820<SharedI2c>),
+    /// `hynitron,cst9217` (M5Stack StopWatch).
+    Cst9217(chips::Cst9217<SharedI2c>),
+}
+
+impl AnyTouch {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match self {
+            AnyTouch::Ft6336(_) => "FT6336U",
+            AnyTouch::Cst820(_) => "CST820",
+            AnyTouch::Cst9217(_) => "CST9217",
+        }
+    }
+}
+
+/// `any_touch!(value, v => expr)`: `expr` for every variant of [`AnyTouch`].
+#[allow(unused_macros)]
+macro_rules! any_touch {
+    ($s:expr, $v:ident => $e:expr) => {
+        match $s {
+            $crate::esp32s3::generated::AnyTouch::Ft6336($v) => $e,
+            $crate::esp32s3::generated::AnyTouch::Cst820($v) => $e,
+            $crate::esp32s3::generated::AnyTouch::Cst9217($v) => $e,
+        }
+    };
+}
+
+/// IMU of any board in this family (generated from the bindings).
+pub enum AnyImu {
+    /// `bosch,bmi270` (M5Stack CoreS3, M5Stack StopWatch).
+    Bmi270(kumiki_bmi270::Bmi270<SharedI2c>),
+    /// `tdk,mpu6886` (M5Stack AtomS3).
+    Mpu6886(kumiki_mpu6886::Mpu6886<SharedI2c>),
+}
+
+impl AnyImu {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match self {
+            AnyImu::Bmi270(_) => "BMI270",
+            AnyImu::Mpu6886(_) => "MPU6886",
+        }
+    }
+}
+
+/// `any_imu!(value, v => expr)`: `expr` for every variant of [`AnyImu`].
+#[allow(unused_macros)]
+macro_rules! any_imu {
+    ($s:expr, $v:ident => $e:expr) => {
+        match $s {
+            $crate::esp32s3::generated::AnyImu::Bmi270($v) => $e,
+            $crate::esp32s3::generated::AnyImu::Mpu6886($v) => $e,
+        }
+    };
+}
+
+/// Power / battery information of any board in this family (generated from the bindings).
+pub enum AnyPower {
+    /// `x-powers,axp2101` (M5Stack CoreS3).
+    Axp2101(chips::Axp2101Power<SharedI2c>),
+}
+
+impl AnyPower {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match self {
+            AnyPower::Axp2101(_) => "AXP2101",
+        }
+    }
+}
+
+/// `any_power!(value, v => expr)`: `expr` for every variant of [`AnyPower`].
+#[allow(unused_macros)]
+macro_rules! any_power {
+    ($s:expr, $v:ident => $e:expr) => {
+        match $s {
+            $crate::esp32s3::generated::AnyPower::Axp2101($v) => $e,
+        }
+    };
+}
+
+/// Backlight of any board in this family (generated from the bindings).
+pub enum AnyBacklight {
+    /// `kumiki,regulator-backlight` (M5Stack CoreS3).
+    Axp2101(chips::Axp2101Backlight<SharedI2c>),
+    /// `gpio-backlight` (M5Stack AtomS3).
+    Gpio(kumiki_class::GpioBacklight<GpioOut>),
+    /// Not controllable.
+    None,
+}
+
+impl AnyBacklight {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match self {
+            AnyBacklight::Axp2101(_) => "REGULATOR-BACKLIGHT",
+            AnyBacklight::Gpio(_) => "NONE",
+            AnyBacklight::None => "DCS-BACKLIGHT",
+        }
+    }
+}
+
+/// `any_backlight!(value, v => expr, none => expr)`: `expr` for every variant of [`AnyBacklight`].
+#[allow(unused_macros)]
+macro_rules! any_backlight {
+    ($s:expr, $v:ident => $e:expr, none => $n:expr) => {
+        match $s {
+            $crate::esp32s3::generated::AnyBacklight::Axp2101($v) => $e,
+            $crate::esp32s3::generated::AnyBacklight::Gpio($v) => $e,
+            $crate::esp32s3::generated::AnyBacklight::None => $n,
+        }
+    };
+}
+
 /// Boards of this family, in detection order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BoardId {
@@ -554,7 +709,7 @@ pub mod atoms3 {
             AnyDisplay::Gc9107(d)
         };
         // /backlight (gpio-backlight)
-        let lcd_backlight = AnyBacklight::Gpio(Output::new(pins.lcd_backlight, Level::High, OutputConfig::default()));
+        let lcd_backlight = AnyBacklight::Gpio(kumiki_class::GpioBacklight(Output::new(pins.lcd_backlight, Level::High, OutputConfig::default())));
         // /buttons (gpio-keys)
         let buttons = ButtonInputs::Gpio { a: Input::new(pins.buttons_button_a, InputConfig::default().with_pull(Pull::Up)), b: None };
         Ok(Devices {

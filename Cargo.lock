@@ -101,11 +101,15 @@ version = "0.1.0"
 dependencies = [
  "embedded-hal",
  "embedded-hal-async",
+ "kumiki-class",
 ]
 
 [[package]]
 name = "kumiki-class"
 version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+]
 
 [[package]]
 name = "kumiki-dt"
@@ -155,6 +159,7 @@ version = "0.1.0"
 dependencies = [
  "embedded-hal",
  "embedded-hal-async",
+ "kumiki-class",
 ]
 
 [[package]]

@@ -27,8 +27,11 @@ use embedded_hal_bus::i2c::RefCellDevice;
 use kumiki_class::{ButtonId, TouchPoint};
 use kumiki_p4v1_hal::{Peripherals, cache, clock, dsi, i2c::I2c, psram};
 
-pub use any::{AnyBacklight, AnyDisplay, AnyError, AnyImu, AnyPower, AnyTouch, DisplayError};
-pub use generated::{BoardId, DetectLog};
+pub use any::{AnyError, DisplayError};
+pub use generated::{AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyTouch, BoardId, DetectLog};
+
+/// Push-pull output (e.g. a GPIO backlight).
+pub type GpioOut = kumiki_p4v1_hal::gpio::Output;
 
 /// Blocking I²C master.
 pub type I2cBus = I2c;

@@ -6,11 +6,13 @@
     # The regulator provider is an AXP2101 LDO (DLDO1 on CoreS3).
     init: |
       {
-          let mut b = AnyBacklight::Axp2101(chips::Axp2101Backlight(RefCellDevice::new(${busof:power-supply})));
+          let mut b = AnyBacklight::${variant}(chips::Axp2101Backlight(RefCellDevice::new(${busof:power-supply})));
           kumiki_class::Backlight::set_brightness(&mut b, ${const:DEFAULT_BRIGHTNESS}.unwrap_or(160).min(255) as u8)
               .map_err(|_| InitError::Display)?;
           b
       }
+    variant: Axp2101
+    type: "chips::Axp2101Backlight<SharedI2c>"
   properties:
     power-supply: { type: phandle, required: true }
     default-brightness: { type: int }
@@ -18,15 +20,18 @@
 - compatible: "gpio-backlight"
   kumiki:
     class: backlight
-    init: "AnyBacklight::Gpio(Output::new(${pin:gpios}, Level::High, OutputConfig::default()))"
+    init: "AnyBacklight::${variant}(kumiki_class::GpioBacklight(Output::new(${pin:gpios}, Level::High, OutputConfig::default())))"
     init-for:
-      p4v1: "AnyBacklight::Gpio(Output::new(${pin:gpios}, true))"
+      p4v1: "AnyBacklight::${variant}(kumiki_class::GpioBacklight(Output::new(${pin:gpios}, true)))"
+    variant: Gpio
+    # `GpioOut`: the family's push-pull output type.
+    type: "kumiki_class::GpioBacklight<GpioOut>"
   properties:
     gpios: { type: gpios, required: true }
     default-on: { type: boolean }
 
 - compatible: "kumiki,dcs-backlight"
-  kumiki: { class: backlight, init: "AnyBacklight::None" }
+  kumiki: { class: backlight, init: "AnyBacklight::None", variant: "None" }
   properties:
     display: { type: phandle, required: true }
 

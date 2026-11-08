@@ -49,8 +49,11 @@ use kumiki_gfx::Display;
 use kumiki_gfx_bus_esp::{EspQspiDmaBus, EspSpiDmaBus};
 use kumiki_gfx_panels::{Co5300, DcsPanel, Gc9107, Ili9342c};
 
-pub use any::{AnyAsyncDisplay, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyTouch};
-pub use generated::{BoardId, DetectLog};
+pub use any::{AnyAsyncDisplay, AnyError};
+pub use generated::{AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyTouch, BoardId, DetectLog};
+
+/// Push-pull output (e.g. a GPIO backlight).
+pub type GpioOut = esp_hal::gpio::Output<'static>;
 
 /// Blocking I²C master.
 pub type I2cBus = I2c<'static, Blocking>;

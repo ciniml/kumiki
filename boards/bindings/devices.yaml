@@ -13,8 +13,10 @@
       {
           chips::axp2101_init(&mut RefCellDevice::new(${bus}), ${const:ADDR}, ${regulators}).map_err(InitError::I2c)?;
           delay.delay_millis(10);
-          AnyPower::Axp2101(chips::Axp2101Power(RefCellDevice::new(${bus})))
+          AnyPower::${variant}(chips::Axp2101Power(RefCellDevice::new(${bus})))
       }
+    variant: Axp2101
+    type: "chips::Axp2101Power<SharedI2c>"
   properties:
     reg: { type: int, required: true }
 
@@ -65,6 +67,7 @@
             AnyDisplay::${variant}(FbDisplay::new(DsiPanel::new(dsi, fbs)).with_rotation(bind::rotation(${const:ROTATION})))
         }
     variant: Ili9881c
+    type: "kumiki_gfx::FbDisplay<kumiki_p4v1_hal::fb::DsiPanel>"
   properties:
     reg: { type: int, required: true }
     backlight: { type: phandle }
@@ -96,6 +99,7 @@
       }
     model: "kumiki_gfx_panels::Ili9342c"
     variant: Ili9342c
+    type: Ili9342cDisplay
   properties: &dcs-panel
     reg: { type: int, required: true }
     spi-max-frequency: { type: int, required: true }
@@ -118,6 +122,7 @@
     init: *spi-dcs-init
     model: "kumiki_gfx_panels::Gc9107"
     variant: Gc9107
+    type: Gc9107Display
   properties: *dcs-panel
 
 - compatible: "chipone,co5300"
@@ -149,6 +154,7 @@
       }
     model: "kumiki_gfx_panels::Co5300"
     variant: Co5300
+    type: Co5300Display
   properties: *dcs-panel
 
 # ---- touch -------------------------------------------------------------------------
@@ -156,7 +162,9 @@
   kumiki:
     bus: i2c
     class: touch
-    init: "AnyTouch::Ft6336(chips::Ft6336 { i2c: RefCellDevice::new(${bus}) })"
+    init: "AnyTouch::${variant}(chips::Ft6336 { i2c: RefCellDevice::new(${bus}) })"
+    variant: Ft6336
+    type: "chips::Ft6336<SharedI2c>"
   properties: &touch
     reg: { type: int, required: true }
     touchscreen-min-x: { type: sint }
@@ -169,7 +177,9 @@
     bus: i2c
     class: touch
     probe: "embedded_hal::i2c::I2c::write(&mut RefCellDevice::new(${bus}), ${const:ADDR}, &[0x00]).is_ok()"
-    init: "AnyTouch::Cst820(chips::Cst820 { i2c: RefCellDevice::new(${bus}), map: ${touchmap}, inited: false })"
+    init: "AnyTouch::${variant}(chips::Cst820 { i2c: RefCellDevice::new(${bus}), map: ${touchmap}, inited: false })"
+    variant: Cst820
+    type: "chips::Cst820<SharedI2c>"
   properties: *touch
 
 - compatible: "hynitron,cst9217"
@@ -177,7 +187,9 @@
     bus: i2c
     class: touch
     probe: "embedded_hal::i2c::I2c::write(&mut RefCellDevice::new(${bus}), ${const:ADDR}, &[0xD0, 0x00]).is_ok()"
-    init: "AnyTouch::Cst9217(chips::Cst9217 { i2c: RefCellDevice::new(${bus}) })"
+    init: "AnyTouch::${variant}(chips::Cst9217 { i2c: RefCellDevice::new(${bus}) })"
+    variant: Cst9217
+    type: "chips::Cst9217<SharedI2c>"
   properties: *touch
 
 - compatible: "goodix,gt911"
@@ -185,7 +197,9 @@
     bus: i2c
     class: touch
     probe: "embedded_hal::i2c::I2c::write(&mut RefCellDevice::new(${bus}), ${const:ADDR}, &[]).is_ok()"
-    init: "AnyTouch::Gt911(chips::Gt911 { i2c: RefCellDevice::new(${bus}), addr: ${const:ADDR} })"
+    init: "AnyTouch::${variant}(chips::Gt911 { i2c: RefCellDevice::new(${bus}), addr: ${const:ADDR} })"
+    variant: Gt911
+    type: "chips::Gt911<SharedI2c>"
   properties: *touch
 
 # ---- sensors -----------------------------------------------------------------------
@@ -196,8 +210,10 @@
     init: |
       {
           let mut m = kumiki_bmi270::Bmi270::new(RefCellDevice::new(${bus}), ${const:ADDR});
-          m.init(&mut delay).ok().map(|_| AnyImu::Bmi270(m))
+          m.init(&mut delay).ok().map(|_| AnyImu::${variant}(m))
       }
+    variant: Bmi270
+    type: "kumiki_bmi270::Bmi270<SharedI2c>"
   properties:
     reg: { type: int, required: true }
 
@@ -208,8 +224,10 @@
     init: |
       {
           let mut m = Mpu6886::new(RefCellDevice::new(${bus}), ${const:ADDR});
-          m.init(&mut delay).ok().map(|_| AnyImu::Mpu6886(m))
+          m.init(&mut delay).ok().map(|_| AnyImu::${variant}(m))
       }
+    variant: Mpu6886
+    type: "kumiki_mpu6886::Mpu6886<SharedI2c>"
   properties:
     reg: { type: int, required: true }
 

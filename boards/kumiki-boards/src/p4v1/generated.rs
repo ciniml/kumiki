@@ -63,6 +63,132 @@ mod prelude {
     };
 }
 
+use super::*;
+
+/// Display of any board in this family (generated from the bindings).
+pub enum AnyDisplay {
+    /// `ilitek,ili9881c` (M5Stack Tab5).
+    Ili9881c(kumiki_gfx::FbDisplay<kumiki_p4v1_hal::fb::DsiPanel>),
+}
+
+impl AnyDisplay {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match self {
+            AnyDisplay::Ili9881c(_) => "ILI9881C",
+        }
+    }
+}
+
+/// `any_display!(value, v => expr)`: `expr` for every variant of [`AnyDisplay`].
+#[allow(unused_macros)]
+macro_rules! any_display {
+    ($s:expr, $v:ident => $e:expr) => {
+        match $s {
+            $crate::p4v1::generated::AnyDisplay::Ili9881c($v) => $e,
+        }
+    };
+}
+
+/// Touch panel of any board in this family (generated from the bindings).
+pub enum AnyTouch {
+    /// `goodix,gt911` (M5Stack Tab5).
+    Gt911(chips::Gt911<SharedI2c>),
+}
+
+impl AnyTouch {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match self {
+            AnyTouch::Gt911(_) => "GT911",
+        }
+    }
+}
+
+/// `any_touch!(value, v => expr)`: `expr` for every variant of [`AnyTouch`].
+#[allow(unused_macros)]
+macro_rules! any_touch {
+    ($s:expr, $v:ident => $e:expr) => {
+        match $s {
+            $crate::p4v1::generated::AnyTouch::Gt911($v) => $e,
+        }
+    };
+}
+
+/// IMU of any board in this family (generated from the bindings).
+pub enum AnyImu {
+    /// `bosch,bmi270` (M5Stack Tab5).
+    Bmi270(kumiki_bmi270::Bmi270<SharedI2c>),
+}
+
+impl AnyImu {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match self {
+            AnyImu::Bmi270(_) => "BMI270",
+        }
+    }
+}
+
+/// `any_imu!(value, v => expr)`: `expr` for every variant of [`AnyImu`].
+#[allow(unused_macros)]
+macro_rules! any_imu {
+    ($s:expr, $v:ident => $e:expr) => {
+        match $s {
+            $crate::p4v1::generated::AnyImu::Bmi270($v) => $e,
+        }
+    };
+}
+
+/// Power / battery information of any board in this family (generated from the bindings).
+pub enum AnyPower {
+}
+
+impl AnyPower {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match *self {}
+    }
+}
+
+/// `any_power!(value, v => expr)`: `expr` for every variant of [`AnyPower`].
+#[allow(unused_macros)]
+macro_rules! any_power {
+    ($s:expr, $v:ident => $e:expr) => {
+        match *$s {
+        }
+    };
+}
+
+/// Backlight of any board in this family (generated from the bindings).
+pub enum AnyBacklight {
+    /// `gpio-backlight` (M5Stack Tab5).
+    Gpio(kumiki_class::GpioBacklight<GpioOut>),
+    /// Not controllable.
+    None,
+}
+
+impl AnyBacklight {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match self {
+            AnyBacklight::Gpio(_) => "NONE",
+            AnyBacklight::None => "NONE",
+        }
+    }
+}
+
+/// `any_backlight!(value, v => expr, none => expr)`: `expr` for every variant of [`AnyBacklight`].
+#[allow(unused_macros)]
+macro_rules! any_backlight {
+    ($s:expr, $v:ident => $e:expr, none => $n:expr) => {
+        match $s {
+            $crate::p4v1::generated::AnyBacklight::Gpio($v) => $e,
+            $crate::p4v1::generated::AnyBacklight::None => $n,
+        }
+    };
+}
+
 /// Boards of this family, in detection order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BoardId {
@@ -295,7 +421,7 @@ pub mod tab5 {
             AnyDisplay::Ili9881c(FbDisplay::new(DsiPanel::new(dsi, fbs)).with_rotation(bind::rotation(lcd::ROTATION)))
         };
         // /backlight (gpio-backlight)
-        let lcd_backlight = AnyBacklight::Gpio(Output::new(pins.lcd_backlight, true));
+        let lcd_backlight = AnyBacklight::Gpio(kumiki_class::GpioBacklight(Output::new(pins.lcd_backlight, true)));
         // /buttons (kumiki,touch-keys)
         let buttons = ButtonInputs::TouchAsA;
         Ok(Devices {

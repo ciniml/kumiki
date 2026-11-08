@@ -1206,6 +1206,7 @@ version = "0.1.0"
 dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
+ "kumiki-class",
 ]
 
 [[package]]
@@ -1228,6 +1229,9 @@ dependencies = [
 [[package]]
 name = "kumiki-class"
 version = "0.1.0"
+dependencies = [
+ "embedded-hal 1.0.0",
+]
 
 [[package]]
 name = "kumiki-demo"
@@ -1277,6 +1281,7 @@ version = "0.1.0"
 dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
+ "kumiki-class",
 ]
 
 [[package]]

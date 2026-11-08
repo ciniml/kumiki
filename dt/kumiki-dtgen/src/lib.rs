@@ -116,9 +116,17 @@ pub struct KumikiMeta {
     /// Driver model type substituted for `${model}`.
     #[serde(default)]
     pub model: Option<String>,
-    /// `Any*` enum variant substituted for `${variant}`.
+    /// `Any*` enum variant substituted for `${variant}`; a device with a
+    /// variant becomes one in the family's generated `Any<Class>` enum.
     #[serde(default)]
     pub variant: Option<String>,
+    /// Rust type the variant holds (relative to the family module; none =
+    /// unit variant).
+    #[serde(default, rename = "type")]
+    pub ty: Option<String>,
+    /// Backend-specific `type` (like `init-for`).
+    #[serde(default, rename = "type-for")]
+    pub ty_for: BTreeMap<String, String>,
 }
 
 /// One binding.

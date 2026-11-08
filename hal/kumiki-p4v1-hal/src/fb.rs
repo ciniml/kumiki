@@ -134,6 +134,13 @@ fn union(a: Option<Rectangle>, b: &Rectangle) -> Rectangle {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PpaError(pub &'static str);
 
+/// Drawing into the frame buffer cannot fail; lets it share this error type.
+impl From<core::convert::Infallible> for PpaError {
+    fn from(e: core::convert::Infallible) -> Self {
+        match e {}
+    }
+}
+
 impl FramebufferPanel for DsiPanel {
     type Format = Rgb565Le;
     type Error = PpaError;

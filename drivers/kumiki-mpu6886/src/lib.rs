@@ -104,6 +104,18 @@ impl<I> Mpu6886<I> {
     }
 }
 
+impl<I: I2c> kumiki_class::Imu for Mpu6886<I> {
+    type Error = Error<I::Error>;
+    fn accel(&mut self) -> Result<kumiki_class::Vec3, Self::Error> {
+        let [x, y, z] = Self::accel_g(self.accel_raw()?);
+        Ok(kumiki_class::Vec3 { x, y, z })
+    }
+    fn gyro(&mut self) -> Result<kumiki_class::Vec3, Self::Error> {
+        let [x, y, z] = Self::gyro_dps(self.gyro_raw()?);
+        Ok(kumiki_class::Vec3 { x, y, z })
+    }
+}
+
 impl<I: I2c> Mpu6886<I> {
     fn read(&mut self, reg: u8, buf: &mut [u8]) -> Result<(), Error<I::Error>> {
         self.i2c.write_read(self.addr, &[reg], buf).map_err(Error::I2c)

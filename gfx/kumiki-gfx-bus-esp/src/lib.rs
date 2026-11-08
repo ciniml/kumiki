@@ -163,6 +163,13 @@ pub enum Error {
     Poisoned,
 }
 
+/// Lets frame-buffered surfaces (which cannot fail) share this error type.
+impl From<core::convert::Infallible> for Error {
+    fn from(e: core::convert::Infallible) -> Self {
+        match e {}
+    }
+}
+
 /// SPI + DMA panel bus with double-buffered pipelining.
 ///
 /// Owns D/C and (optionally) CS. CS, when given, is held asserted for the
