@@ -270,6 +270,9 @@ fn init_cores3(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devic
     let mut backlight = AnyBacklight::Axp2101(chips::Axp2101Backlight(RefCellDevice::new(bus)));
     kumiki_class::Backlight::set_brightness(&mut backlight, 160).map_err(|_| InitError::Display)?;
 
+    let mut bmi = kumiki_bmi270::Bmi270::new(RefCellDevice::new(bus), kumiki_bmi270::ALT_ADDRESS);
+    let imu = bmi.init(&mut delay).ok().map(|_| AnyImu::Bmi270(bmi));
+
     let touch = Some(AnyTouch::Ft6336(chips::Ft6336 { i2c: RefCellDevice::new(bus) }));
     let power = Some(AnyPower::Axp2101(chips::Axp2101Power(RefCellDevice::new(bus))));
 
@@ -278,7 +281,7 @@ fn init_cores3(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devic
         display: AnyDisplay::CoreS3(display),
         backlight,
         touch,
-        imu: None, // BMI270 driver pending
+        imu,
         power,
         buttons: ButtonInputs::TouchAsA,
         spare,

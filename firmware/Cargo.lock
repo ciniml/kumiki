@@ -1201,6 +1201,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kumiki-bmi270"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal 1.0.0",
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "kumiki-boards"
 version = "0.1.0"
 dependencies = [
@@ -1208,6 +1216,7 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-bus",
  "esp-hal",
+ "kumiki-bmi270",
  "kumiki-class",
  "kumiki-gfx",
  "kumiki-gfx-bus-esp",

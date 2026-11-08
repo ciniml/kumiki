@@ -3,6 +3,14 @@
 kumiki itself is licensed under MIT OR Apache-2.0. Some parts are ported from
 or based on the following projects; their notices are reproduced here.
 
+## Bosch Sensortec BMI270_SensorAPI
+
+Used for: the BMI270 configuration blob. `drivers/kumiki-bmi270/vendor/bmi270.c`
+is an unmodified copy of `bmi270.c` v2.86.1 from
+<https://github.com/boschsensortec/BMI270_SensorAPI> and carries its own
+BSD-3-Clause notice (Copyright (c) 2023 Bosch Sensortec GmbH). Binaries that
+include `kumiki-bmi270` must reproduce that notice.
+
 ## M5GFX
 
 Used for: panel init tables, rotation/MADCTL tables, board bring-up sequences

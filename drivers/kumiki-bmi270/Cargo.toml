@@ -1,0 +1,15 @@
+[package]
+name = "kumiki-bmi270"
+description = "Bosch BMI270 6-axis IMU driver (embedded-hal 1.0, blocking + async), config blob included"
+version.workspace = true
+edition.workspace = true
+# Crate code: MIT OR Apache-2.0. vendor/bmi270.c (config blob source): BSD-3-Clause, Bosch Sensortec.
+license = "MIT OR Apache-2.0 AND BSD-3-Clause"
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+include = ["src/**", "vendor/bmi270.c", "Cargo.toml"]
+
+[dependencies]
+embedded-hal.workspace = true
+embedded-hal-async.workspace = true

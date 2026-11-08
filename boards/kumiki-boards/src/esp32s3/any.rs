@@ -12,6 +12,7 @@ use esp_hal::gpio::Output;
 use kumiki_class::{Backlight, Imu, Power, Touch, TouchPoint, Vec3};
 use kumiki_gfx::{AsyncFastDraw, FastDraw, PixelFormat, Rgb565Be};
 use kumiki_gfx_bus_esp::Error as BusError;
+use kumiki_bmi270::Bmi270;
 use kumiki_mpu6886::Mpu6886;
 
 use super::{AtomS3AsyncDisplay, AtomS3Display, CoreS3AsyncDisplay, CoreS3Display, I2cBus, SharedI2c, chips};
@@ -121,11 +122,13 @@ pub enum AnyBacklight {
     Gpio(Output<'static>),
 }
 
-/// Backlight error.
+/// Error of the `Any*` devices.
 #[derive(Debug)]
 pub enum AnyError {
     /// I²C failure.
     I2c(esp_hal::i2c::master::Error),
+    /// The device reported an unexpected state.
+    Device,
 }
 
 impl Backlight for AnyBacklight {
@@ -160,33 +163,39 @@ impl Touch for AnyTouch {
 pub enum AnyImu {
     /// MPU-6886 (AtomS3).
     Mpu6886(Mpu6886<I2cBus>),
+    /// BMI270 on the shared internal bus (CoreS3).
+    Bmi270(Bmi270<SharedI2c>),
+}
+
+fn mpu_err(e: kumiki_mpu6886::Error<esp_hal::i2c::master::Error>) -> AnyError {
+    match e {
+        kumiki_mpu6886::Error::I2c(e) => AnyError::I2c(e),
+        kumiki_mpu6886::Error::WrongId(_) => AnyError::Device,
+    }
+}
+
+fn bmi_err(e: kumiki_bmi270::Error<esp_hal::i2c::master::Error>) -> AnyError {
+    match e {
+        kumiki_bmi270::Error::I2c(e) => AnyError::I2c(e),
+        _ => AnyError::Device,
+    }
 }
 
 impl Imu for AnyImu {
     type Error = AnyError;
     fn accel(&mut self) -> Result<Vec3, AnyError> {
-        match self {
-            AnyImu::Mpu6886(m) => {
-                let raw = m.accel_raw().map_err(|e| match e {
-                    kumiki_mpu6886::Error::I2c(e) => AnyError::I2c(e),
-                    kumiki_mpu6886::Error::WrongId(_) => unreachable!(),
-                })?;
-                let [x, y, z] = Mpu6886::<I2cBus>::accel_g(raw);
-                Ok(Vec3 { x, y, z })
-            }
-        }
+        let [x, y, z] = match self {
+            AnyImu::Mpu6886(m) => Mpu6886::<I2cBus>::accel_g(m.accel_raw().map_err(mpu_err)?),
+            AnyImu::Bmi270(m) => Bmi270::<SharedI2c>::accel_g(m.accel_raw().map_err(bmi_err)?),
+        };
+        Ok(Vec3 { x, y, z })
     }
     fn gyro(&mut self) -> Result<Vec3, AnyError> {
-        match self {
-            AnyImu::Mpu6886(m) => {
-                let raw = m.gyro_raw().map_err(|e| match e {
-                    kumiki_mpu6886::Error::I2c(e) => AnyError::I2c(e),
-                    kumiki_mpu6886::Error::WrongId(_) => unreachable!(),
-                })?;
-                let [x, y, z] = Mpu6886::<I2cBus>::gyro_dps(raw);
-                Ok(Vec3 { x, y, z })
-            }
-        }
+        let [x, y, z] = match self {
+            AnyImu::Mpu6886(m) => Mpu6886::<I2cBus>::gyro_dps(m.gyro_raw().map_err(mpu_err)?),
+            AnyImu::Bmi270(m) => Bmi270::<SharedI2c>::gyro_dps(m.gyro_raw().map_err(bmi_err)?),
+        };
+        Ok(Vec3 { x, y, z })
     }
 }
 

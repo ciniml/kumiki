@@ -20,6 +20,7 @@ kumiki-gfx-panels = { path = "../../gfx/kumiki-gfx-panels" }
 kumiki-gfx-bus-esp = { path = "../../gfx/kumiki-gfx-bus-esp" }
 kumiki-class = { path = "../../dt/kumiki-class" }
 kumiki-mpu6886 = { path = "../../drivers/kumiki-mpu6886" }
+kumiki-bmi270 = { path = "../../drivers/kumiki-bmi270" }
 embedded-graphics-core = "0.4"
 embedded-hal = "1.0"
 embedded-hal-bus = "0.3"

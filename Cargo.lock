@@ -68,6 +68,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kumiki-bmi270"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "kumiki-class"
 version = "0.1.0"
 
