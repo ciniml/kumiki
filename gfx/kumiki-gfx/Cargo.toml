@@ -1,0 +1,17 @@
+[package]
+name = "kumiki-gfx"
+description = "Fast, HAL-independent display graphics core for no_std (pixel formats, bus/panel traits, surfaces)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+embedded-graphics-core.workspace = true
+embedded-hal.workspace = true
+embedded-hal-async.workspace = true
+
+[dev-dependencies]
+embedded-graphics.workspace = true

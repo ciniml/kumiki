@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = [
+    "gfx/kumiki-gfx",
+    "gfx/kumiki-gfx-panels",
+    "gfx/kumiki-gfx-bus-ehal",
+]
+# ESP 依存のクレートとファームウェアは、ターゲット固有のビルド設定を持つ firmware/ ワークスペースでビルドする。
+exclude = ["gfx/kumiki-gfx-bus-esp", "firmware"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Kenta Ida <fuga@fugafuga.org>"]
+repository = "https://github.com/ciniml/kumiki"
+rust-version = "1.88"
+
+[workspace.dependencies]
+embedded-graphics-core = "0.4"
+embedded-graphics = "0.8"
+embedded-hal = "1.0"
+embedded-hal-async = "1.0"
+kumiki-gfx = { path = "gfx/kumiki-gfx" }
+kumiki-gfx-panels = { path = "gfx/kumiki-gfx-panels" }
+kumiki-gfx-bus-ehal = { path = "gfx/kumiki-gfx-bus-ehal" }
