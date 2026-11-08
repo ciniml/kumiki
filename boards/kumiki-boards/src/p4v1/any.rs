@@ -10,11 +10,11 @@ use embedded_graphics_core::{
     primitives::Rectangle,
     Pixel,
 };
-use kumiki_class::{Backlight, Imu, Power, Touch, TouchPoint, Vec3};
+use kumiki_class::{Backlight, DateTime, Imu, Power, Rtc, Touch, TouchPoint, Vec3};
 use kumiki_gfx::{FastDraw, PixelFormat, Rgb565Le};
 use kumiki_p4v1_hal::i2c;
 
-use super::{AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyTouch};
+use super::{AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnyTouch};
 
 /// Display error: a 2D-engine (PPA) failure while presenting.
 pub type DisplayError = kumiki_p4v1_hal::fb::PpaError;
@@ -139,6 +139,19 @@ impl Imu for AnyImu {
     }
     fn gyro(&mut self) -> Result<Vec3, AnyError> {
         any_imu!(self, m => m.gyro().map_err(AnyError::from))
+    }
+}
+
+impl Rtc for AnyRtc {
+    type Error = AnyError;
+    fn datetime(&mut self) -> Result<DateTime, AnyError> {
+        any_rtc!(self, r => r.datetime().map_err(AnyError::from))
+    }
+    fn set_datetime(&mut self, t: &DateTime) -> Result<(), AnyError> {
+        any_rtc!(self, r => r.set_datetime(t).map_err(AnyError::from))
+    }
+    fn power_lost(&mut self) -> Result<bool, AnyError> {
+        any_rtc!(self, r => r.power_lost().map_err(AnyError::from))
     }
 }
 

@@ -163,6 +163,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kumiki-rtc"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+ "kumiki-class",
+]
+
+[[package]]
 name = "micromath"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

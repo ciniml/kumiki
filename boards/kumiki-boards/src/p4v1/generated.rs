@@ -58,7 +58,7 @@ mod prelude {
     };
     pub use static_cell::StaticCell;
     pub use super::super::{
-        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
+        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
         Spare,
     };
 }
@@ -189,6 +189,31 @@ macro_rules! any_backlight {
     };
 }
 
+/// Real-time clock of any board in this family (generated from the bindings).
+pub enum AnyRtc {
+    /// `epson,rx8130` (M5Stack Tab5).
+    Rx8130(kumiki_rtc::Rx8130<SharedI2c>),
+}
+
+impl AnyRtc {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match self {
+            AnyRtc::Rx8130(_) => "RX8130",
+        }
+    }
+}
+
+/// `any_rtc!(value, v => expr)`: `expr` for every variant of [`AnyRtc`].
+#[allow(unused_macros)]
+macro_rules! any_rtc {
+    ($s:expr, $v:ident => $e:expr) => {
+        match $s {
+            $crate::p4v1::generated::AnyRtc::Rx8130($v) => $e,
+        }
+    };
+}
+
 /// Boards of this family, in detection order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BoardId {
@@ -260,7 +285,7 @@ pub mod tab5 {
     /// Needs PSRAM (a frame buffer lives there).
     pub const NEEDS_PSRAM: bool = true;
     /// Device bring-up order (dependency graph of the device tree).
-    pub const INIT_ORDER: &[&str] = &["i2c1", "ioexp1", "ioexp2", "imu", "dsi", "display_power", "touch_gt911_14", "touch_gt911_5d", "lcd", "lcd_backlight", "buttons"];
+    pub const INIT_ORDER: &[&str] = &["i2c1", "ioexp1", "ioexp2", "imu", "rtc", "dsi", "display_power", "touch_gt911_14", "touch_gt911_5d", "lcd", "lcd_backlight", "buttons"];
 
     /// Chip GPIOs used by the board (see `take_pins_tab5!`).
     pub struct Pins {
@@ -329,6 +354,13 @@ pub mod tab5 {
         pub const COMPATIBLE: &str = "bosch,bmi270";
         pub const ADDR: u8 = 0x68;
     }
+    /// `/soc/i2c@500c5000/rtc@32` (epson,rx8130).
+    pub mod rtc {
+        #[allow(unused_imports)]
+        use super::super::Gpio;
+        pub const COMPATIBLE: &str = "epson,rx8130";
+        pub const ADDR: u8 = 0x32;
+    }
     /// `/soc/dsi@50105000` (espressif,esp32p4-dsi).
     pub mod dsi {
         #[allow(unused_imports)]
@@ -394,6 +426,11 @@ pub mod tab5 {
             let mut m = kumiki_bmi270::Bmi270::new(RefCellDevice::new(i2c1), imu::ADDR);
             m.init(&mut delay).ok().map(|_| AnyImu::Bmi270(m))
         };
+        // /soc/i2c@500c5000/rtc@32 (epson,rx8130)
+        let rtc = {
+            let mut r = kumiki_rtc::Rx8130::new(RefCellDevice::new(i2c1), rtc::ADDR);
+            r.init().ok().map(|_| AnyRtc::Rx8130(r))
+        };
         // /soc/dsi@50105000 (espressif,esp32p4-dsi)
         let dsi = ();
         // /display-power-sequence (m5stack,tab5-display-power-sequence)
@@ -431,6 +468,7 @@ pub mod tab5 {
             touch: touch_group,
             imu: imu,
             power: None,
+            rtc: rtc,
             buttons: buttons,
             spare,
         })

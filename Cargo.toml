@@ -9,6 +9,7 @@ members = [
     "dt/kumiki-dtgen",
     "drivers/kumiki-mpu6886",
     "drivers/kumiki-bmi270",
+    "drivers/kumiki-rtc",
 ]
 # ESP 依存のクレートとファームウェアは、ターゲット固有のビルド設定を持つ firmware/ ワークスペースでビルドする。
 exclude = ["gfx/kumiki-gfx-bus-esp", "boards/kumiki-boards", "firmware", "hal/kumiki-p4v1-hal", "firmware-p4"]

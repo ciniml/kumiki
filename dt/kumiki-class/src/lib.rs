@@ -61,6 +61,38 @@ pub trait Backlight {
     fn set_brightness(&mut self, level: u8) -> Result<(), Self::Error>;
 }
 
+/// Calendar date and time (no time zone; whatever the application sets).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DateTime {
+    /// Full year (2000–2099 on most RTCs).
+    pub year: u16,
+    /// 1–12.
+    pub month: u8,
+    /// 1–31.
+    pub day: u8,
+    /// 0–6, 0 = Sunday.
+    pub weekday: u8,
+    /// 0–23.
+    pub hour: u8,
+    /// 0–59.
+    pub minute: u8,
+    /// 0–59.
+    pub second: u8,
+}
+
+/// Real-time clock.
+pub trait Rtc {
+    /// Error type.
+    type Error: core::fmt::Debug;
+    /// Current date and time.
+    fn datetime(&mut self) -> Result<DateTime, Self::Error>;
+    /// Set the date and time.
+    fn set_datetime(&mut self, t: &DateTime) -> Result<(), Self::Error>;
+    /// Whether the clock lost power (backup voltage low) since it was last
+    /// set, i.e. the time is not trustworthy.
+    fn power_lost(&mut self) -> Result<bool, Self::Error>;
+}
+
 /// A backlight that is only switched on and off by a GPIO.
 pub struct GpioBacklight<P>(pub P);
 

@@ -231,7 +231,34 @@
   properties:
     reg: { type: int, required: true }
 
+# ---- real-time clocks --------------------------------------------------------------
 - compatible: "belling,bm8563"
-  kumiki: { bus: i2c, class: rtc, init: "()" }
-  properties:
+  kumiki:
+    bus: i2c
+    class: rtc
+    init: &pcf8563-init |
+      {
+          let mut r = kumiki_rtc::Pcf8563::new(RefCellDevice::new(${bus}), ${const:ADDR});
+          r.init().ok().map(|_| AnyRtc::${variant}(r))
+      }
+    variant: Pcf8563
+    type: "kumiki_rtc::Pcf8563<SharedI2c>"
+  properties: &rtc
     reg: { type: int, required: true }
+
+- compatible: "nxp,pcf8563"
+  kumiki: { bus: i2c, class: rtc, init: *pcf8563-init, variant: Pcf8563, type: "kumiki_rtc::Pcf8563<SharedI2c>" }
+  properties: *rtc
+
+- compatible: "epson,rx8130"
+  kumiki:
+    bus: i2c
+    class: rtc
+    init: |
+      {
+          let mut r = kumiki_rtc::Rx8130::new(RefCellDevice::new(${bus}), ${const:ADDR});
+          r.init().ok().map(|_| AnyRtc::${variant}(r))
+      }
+    variant: Rx8130
+    type: "kumiki_rtc::Rx8130<SharedI2c>"
+  properties: *rtc

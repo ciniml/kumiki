@@ -129,7 +129,7 @@ const PRELUDE: &str = r#"mod prelude {
     pub use kumiki_mpu6886::Mpu6886;
     pub use static_cell::StaticCell;
     pub use super::super::{
-        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
+        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
         Spare,
     };
 }
@@ -152,7 +152,7 @@ const PRELUDE_P4V1: &str = r#"mod prelude {
     };
     pub use static_cell::StaticCell;
     pub use super::super::{
-        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
+        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
         Spare,
     };
 }
@@ -481,12 +481,14 @@ fn emit_init(out: &mut String, board: &Board, bindings: &Bindings, backend: Back
     };
     let imu = chosen_refs(tree, "kumiki,imu").first().map(|p| var_of(p)).unwrap_or_else(|| "None".into());
     let power = chosen_refs(tree, "kumiki,power").first().map(|p| format!("Some({})", var_of(p))).unwrap_or_else(|| "None".into());
+    // RTC init templates yield an Option (the chip may not answer).
+    let rtc = chosen_refs(tree, "kumiki,rtc").first().map(|p| var_of(p)).unwrap_or_else(|| "None".into());
     let backlight = class_node("backlight").map(|p| var_of(&p)).unwrap_or_else(|| "AnyBacklight::None".into());
     let buttons = class_node("buttons").map(|p| var_of(&p)).ok_or_else(|| Error(format!("{}: no buttons node", board.source.display())))?;
     writeln!(out, "        Ok(Devices {{").unwrap();
     writeln!(out, "            board: super::BoardId::{},", variant_of(board.model())).unwrap();
     writeln!(out, "            display: {},", var_of(&display)).unwrap();
-    writeln!(out, "            backlight: {backlight},\n            touch: {touch},\n            imu: {imu},\n            power: {power},").unwrap();
+    writeln!(out, "            backlight: {backlight},\n            touch: {touch},\n            imu: {imu},\n            power: {power},\n            rtc: {rtc},").unwrap();
     writeln!(out, "            buttons: {buttons},\n            spare,\n        }})\n    }}").unwrap();
     Ok(())
 }
@@ -719,6 +721,7 @@ const ANY_CLASSES: &[(&str, &str, &str)] = &[
     ("imu", "AnyImu", "IMU"),
     ("power", "AnyPower", "Power / battery information"),
     ("backlight", "AnyBacklight", "Backlight"),
+    ("rtc", "AnyRtc", "Real-time clock"),
 ];
 
 /// Emit the `Any<Class>` enums: one variant per binding `kumiki.variant`

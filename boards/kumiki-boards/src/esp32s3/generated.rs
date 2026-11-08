@@ -64,7 +64,7 @@ mod prelude {
     pub use kumiki_mpu6886::Mpu6886;
     pub use static_cell::StaticCell;
     pub use super::super::{
-        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
+        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
         Spare,
     };
 }
@@ -220,6 +220,31 @@ macro_rules! any_backlight {
             $crate::esp32s3::generated::AnyBacklight::Axp2101($v) => $e,
             $crate::esp32s3::generated::AnyBacklight::Gpio($v) => $e,
             $crate::esp32s3::generated::AnyBacklight::None => $n,
+        }
+    };
+}
+
+/// Real-time clock of any board in this family (generated from the bindings).
+pub enum AnyRtc {
+    /// `belling,bm8563` (M5Stack CoreS3).
+    Pcf8563(kumiki_rtc::Pcf8563<SharedI2c>),
+}
+
+impl AnyRtc {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match self {
+            AnyRtc::Pcf8563(_) => "BM8563",
+        }
+    }
+}
+
+/// `any_rtc!(value, v => expr)`: `expr` for every variant of [`AnyRtc`].
+#[allow(unused_macros)]
+macro_rules! any_rtc {
+    ($s:expr, $v:ident => $e:expr) => {
+        match $s {
+            $crate::esp32s3::generated::AnyRtc::Pcf8563($v) => $e,
         }
     };
 }
@@ -523,7 +548,10 @@ pub mod cores3 {
             m.init(&mut delay).ok().map(|_| AnyImu::Bmi270(m))
         };
         // /soc/i2c@60013000/rtc@51 (belling,bm8563)
-        let rtc = ();
+        let rtc = {
+            let mut r = kumiki_rtc::Pcf8563::new(RefCellDevice::new(i2c0), rtc::ADDR);
+            r.init().ok().map(|_| AnyRtc::Pcf8563(r))
+        };
         // /soc/spi@60024000 (espressif,esp32-spi)
         let spi2 = ();
         // /soc/spi@60024000/display@0 (ilitek,ili9342c)
@@ -559,6 +587,7 @@ pub mod cores3 {
             touch: Some(touch),
             imu: imu,
             power: Some(pmic),
+            rtc: rtc,
             buttons: buttons,
             spare,
         })
@@ -719,6 +748,7 @@ pub mod atoms3 {
             touch: None,
             imu: imu,
             power: None,
+            rtc: None,
             buttons: buttons,
             spare,
         })
@@ -960,6 +990,7 @@ pub mod stopwatch {
             touch: touch_group,
             imu: imu,
             power: None,
+            rtc: None,
             buttons: buttons,
             spare,
         })

@@ -27,7 +27,7 @@ use embedded_graphics::{
     text::Text,
 };
 use kumiki_boards::Devices;
-use kumiki_class::{Backlight, ButtonKind, Buttons, Imu, Power, Touch, TouchPoint};
+use kumiki_class::{Backlight, ButtonKind, Buttons, Imu, Power, Rtc, Touch, TouchPoint};
 use kumiki_gfx::{FastDraw, Rgb565Be, Sprite, Viewport};
 
 use crate::platform::{delay_ms, now_ms};
@@ -91,14 +91,18 @@ fn draw_page0<D: Canvas>(d: &mut D, name: &str) {
 
 /// Runs the demo on the brought-up board; never returns.
 pub fn run(dev: Devices) -> ! {
-    let Devices { board, mut display, mut backlight, mut touch, mut imu, mut power, mut buttons, .. } = dev;
+    let Devices { board, mut display, mut backlight, mut touch, mut imu, mut power, mut rtc, mut buttons, .. } = dev;
     println!(
-        "kumiki-demo: detected {} (touch: {}, imu: {}, power: {})",
+        "kumiki-demo: detected {} (touch: {}, imu: {}, power: {}, rtc: {})",
         board.name(),
         touch.as_ref().map(|t| t.name()).unwrap_or("none"),
         imu.is_some(),
-        power.is_some()
+        power.is_some(),
+        rtc.as_ref().map(|r| r.name()).unwrap_or("none")
     );
+    if let Some(r) = rtc.as_mut() {
+        println!("rtc: {:?}, power lost: {:?}", r.datetime(), r.power_lost());
+    }
     backlight.set_brightness(200).ok();
 
     let mut sprite_buf = [0u8; 32 * 32 * 2];
@@ -149,6 +153,30 @@ pub fn run(dev: Devices) -> ! {
                         let _ = write!(l, "bat {}mV usb {}", mv, if usb { "yes" } else { "no" });
                         text(&mut v, l.as_str(), 3, Rgb565::new(20, 40, 31));
                     }
+                }
+                if frame % 15 == 0
+                    && let Some(r) = rtc.as_mut()
+                {
+                    let mut l = Line::<32>::new();
+                    match (r.datetime(), r.power_lost()) {
+                        (Ok(t), Ok(lost)) => {
+                            let _ = write!(
+                                l,
+                                "{:04}-{:02}-{:02} {:02}:{:02}:{:02}{}",
+                                t.year,
+                                t.month,
+                                t.day,
+                                t.hour,
+                                t.minute,
+                                t.second,
+                                if lost { " ?" } else { "" }
+                            );
+                        }
+                        _ => {
+                            let _ = write!(l, "rtc read error");
+                        }
+                    }
+                    text(&mut v, l.as_str(), 4, Rgb565::new(31, 50, 20));
                 }
             }
             1 => {
@@ -222,6 +250,16 @@ pub fn run(dev: Devices) -> ! {
                     y += 2 * vy;
                 }
                 spr.push_keyed(&mut v, Point::new(x, y), Rgb565::MAGENTA).ok();
+                // A second copy spinning and breathing in the middle
+                // (`Sprite::push_rotate_zoom`); its square is cleared first.
+                let zoom_max = (vs.width.min(vs.height) as f32 / 64.0).clamp(1.0, 6.0);
+                let phase = (frame % 120) as f32 / 120.0;
+                let zoom = zoom_max * (0.6 + 0.4 * (1.0 - (2.0 * phase - 1.0).abs()));
+                let c = Point::new(vs.width as i32 / 2, vs.height as i32 / 2);
+                let r = (32.0 * zoom_max * 0.72) as i32 + 2;
+                v.fill_rect(&Rectangle::new(c - Point::new(r, r), Size::new(2 * r as u32, 2 * r as u32)), Rgb565::new(0, 8, 12))
+                    .ok();
+                spr.push_rotate_zoom(&mut v, c, (frame * 3) as f32, zoom, zoom, Some(Rgb565::MAGENTA)).ok();
             }
         }
         // Touch: draw a dot where the panel is touched (every board with touch).

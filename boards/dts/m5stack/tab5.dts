@@ -21,6 +21,7 @@
 		kumiki,display = &lcd;
 		kumiki,touch = &touch_gt911_14, &touch_gt911_5d;
 		kumiki,imu = &imu;
+		kumiki,rtc = &rtc;
 	};
 
 	lcd_backlight: backlight {
@@ -96,6 +97,11 @@
 	imu: imu@68 {
 		compatible = "bosch,bmi270";
 		reg = <0x68>;
+	};
+
+	rtc: rtc@32 {
+		compatible = "epson,rx8130";
+		reg = <0x32>;
 	};
 };
 

@@ -1223,6 +1223,7 @@ dependencies = [
  "kumiki-gfx-bus-esp",
  "kumiki-gfx-panels",
  "kumiki-mpu6886",
+ "kumiki-rtc",
  "static_cell",
 ]
 
@@ -1281,6 +1282,14 @@ version = "0.1.0"
 dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
+ "kumiki-class",
+]
+
+[[package]]
+name = "kumiki-rtc"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal 1.0.0",
  "kumiki-class",
 ]
 

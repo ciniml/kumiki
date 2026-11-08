@@ -17,6 +17,7 @@
 		kumiki,touch = &touch;
 		kumiki,imu = &imu;
 		kumiki,power = &pmic;
+		kumiki,rtc = &rtc;
 	};
 
 	lcd_backlight: backlight {

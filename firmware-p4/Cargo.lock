@@ -104,6 +104,7 @@ dependencies = [
  "kumiki-gfx",
  "kumiki-gfx-panels",
  "kumiki-p4v1-hal",
+ "kumiki-rtc",
  "static_cell",
 ]
 
@@ -140,6 +141,14 @@ dependencies = [
  "embedded-graphics-core",
  "embedded-hal",
  "kumiki-gfx",
+]
+
+[[package]]
+name = "kumiki-rtc"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+ "kumiki-class",
 ]
 
 [[package]]

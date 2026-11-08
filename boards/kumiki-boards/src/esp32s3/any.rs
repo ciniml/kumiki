@@ -11,12 +11,12 @@ use embedded_graphics_core::{
     primitives::Rectangle,
     Pixel,
 };
-use kumiki_class::{Backlight, Imu, Power, Touch, TouchPoint, Vec3};
+use kumiki_class::{Backlight, DateTime, Imu, Power, Rtc, Touch, TouchPoint, Vec3};
 use kumiki_gfx::{AsyncFastDraw, FastDraw, PixelFormat, Rgb565Be};
 use kumiki_gfx_bus_esp::Error as BusError;
 
 use super::{
-    AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyTouch, Co5300AsyncDisplay, Gc9107AsyncDisplay, Ili9342cAsyncDisplay,
+    AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnyTouch, Co5300AsyncDisplay, Gc9107AsyncDisplay, Ili9342cAsyncDisplay,
 };
 
 type I2cError = esp_hal::i2c::master::Error;
@@ -206,6 +206,19 @@ impl Imu for AnyImu {
     }
     fn gyro(&mut self) -> Result<Vec3, AnyError> {
         any_imu!(self, m => m.gyro().map_err(AnyError::from))
+    }
+}
+
+impl Rtc for AnyRtc {
+    type Error = AnyError;
+    fn datetime(&mut self) -> Result<DateTime, AnyError> {
+        any_rtc!(self, r => r.datetime().map_err(AnyError::from))
+    }
+    fn set_datetime(&mut self, t: &DateTime) -> Result<(), AnyError> {
+        any_rtc!(self, r => r.set_datetime(t).map_err(AnyError::from))
+    }
+    fn power_lost(&mut self) -> Result<bool, AnyError> {
+        any_rtc!(self, r => r.power_lost().map_err(AnyError::from))
     }
 }
 
