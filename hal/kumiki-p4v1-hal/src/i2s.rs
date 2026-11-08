@@ -47,7 +47,6 @@
 //!
 //! [`ahb_dma`]: crate::ahb_dma
 
-use core::ptr::addr_of;
 use core::sync::atomic::{Ordering, fence};
 
 use crate::ahb_dma::{self, Descriptor, RxChannel, TxChannel};
@@ -123,9 +122,15 @@ pub const RX_DESCS: usize = 32;
 const TX_RING: usize = DESC_LEN * TX_DESCS;
 const RX_RING: usize = DESC_LEN * RX_DESCS;
 
-/// Descriptors and buffers (in .bss, L2MEM).
+/// The DMA memory of one stream: both descriptor rings and both buffers
+/// (about 33.5 KiB). [`I2s::new`] uses one in this crate's `.bss`;
+/// [`I2s::new_in`] takes one placed by the caller.
+///
+/// It must lie in **L2MEM** (0x4FF0_0000..0x4FFC_0000, below the L2 cache):
+/// the driver accesses it through L2MEM's non-cacheable alias, and the
+/// AHB-GDMA's memory window must cover it.
 #[repr(C, align(64))]
-struct DmaMem {
+pub struct DmaMem {
     tx_desc: [Descriptor; TX_DESCS],
     rx_desc: [Descriptor; RX_DESCS],
     tx_buf: [u8; TX_RING],
@@ -133,24 +138,35 @@ struct DmaMem {
 }
 
 const ZERO_DESC: Descriptor = Descriptor { dw0: 0, buf: 0, next: 0 };
-static mut DMA_MEM: DmaMem = DmaMem {
-    tx_desc: [ZERO_DESC; TX_DESCS],
-    rx_desc: [ZERO_DESC; RX_DESCS],
-    tx_buf: [0; TX_RING],
-    rx_buf: [0; RX_RING],
-};
 
-fn tx_desc_addr(i: usize) -> usize {
-    unsafe { addr_of!(DMA_MEM.tx_desc[i]) as usize }
+impl DmaMem {
+    /// Zeroed memory (for a `static`).
+    pub const fn new() -> Self {
+        DmaMem { tx_desc: [ZERO_DESC; TX_DESCS], rx_desc: [ZERO_DESC; RX_DESCS], tx_buf: [0; TX_RING], rx_buf: [0; RX_RING] }
+    }
 }
-fn rx_desc_addr(i: usize) -> usize {
-    unsafe { addr_of!(DMA_MEM.rx_desc[i]) as usize }
+
+impl Default for DmaMem {
+    fn default() -> Self {
+        Self::new()
+    }
 }
-fn tx_buf_addr() -> usize {
-    unsafe { addr_of!(DMA_MEM.tx_buf) as usize }
+
+static mut DMA_MEM: DmaMem = DmaMem::new();
+
+const DESC_SIZE: usize = core::mem::size_of::<Descriptor>();
+
+fn tx_desc_addr(mem: usize, i: usize) -> usize {
+    mem + core::mem::offset_of!(DmaMem, tx_desc) + i * DESC_SIZE
 }
-fn rx_buf_addr() -> usize {
-    unsafe { addr_of!(DMA_MEM.rx_buf) as usize }
+fn rx_desc_addr(mem: usize, i: usize) -> usize {
+    mem + core::mem::offset_of!(DmaMem, rx_desc) + i * DESC_SIZE
+}
+fn tx_buf_addr(mem: usize) -> usize {
+    mem + core::mem::offset_of!(DmaMem, tx_buf)
+}
+fn rx_buf_addr(mem: usize) -> usize {
+    mem + core::mem::offset_of!(DmaMem, rx_buf)
 }
 /// `dw0` of descriptor at `addr`, through the uncached alias.
 fn desc_dw0(addr: usize) -> u32 {
@@ -332,6 +348,8 @@ pub struct I2s {
     _pins: Pins,
     tx: TxChannel,
     rx: RxChannel,
+    /// Address of the stream's [`DmaMem`].
+    mem: usize,
     config: Config,
     divider: MclkDivider,
     running: bool,
@@ -350,9 +368,22 @@ pub struct I2s {
 }
 
 impl I2s {
-    /// Sets up I2S0 and its DMA rings with `pins` at `config`; the bus
-    /// stays idle until [`start`](Self::start).
-    pub fn new(_inst: I2s0, pins: Pins, config: Config) -> Result<Self, Error> {
+    /// Sets up I2S0 and its DMA rings with `pins` at `config`, using the
+    /// [`DmaMem`] in this crate's `.bss`; the bus stays idle until
+    /// [`start`](Self::start).
+    pub fn new(inst: I2s0, pins: Pins, config: Config) -> Result<Self, Error> {
+        // SAFETY: the `I2s0` token exists once, so this runs at most once
+        // per program and the memory has no other user.
+        let mem = unsafe { &mut *core::ptr::addr_of_mut!(DMA_MEM) };
+        Self::new_in(inst, pins, config, mem)
+    }
+
+    /// [`new`](Self::new) with the DMA memory placed by the caller (an OS
+    /// whose `.bss` has no room, for instance). `mem` must lie in L2MEM
+    /// (see [`DmaMem`]); the driver does the cache maintenance it needs
+    /// (writes the lines back and drops them) before using it.
+    pub fn new_in(_inst: I2s0, pins: Pins, config: Config, mem: &'static mut DmaMem) -> Result<Self, Error> {
+        let mem = mem as *mut DmaMem as usize;
         if config.dma_channel >= ahb_dma::CHANNELS {
             return Err(Error::DmaChannel);
         }
@@ -416,9 +447,9 @@ impl I2s {
         let (Some(tx), Some(rx)) = (tx, rx) else { return Err(Error::DmaChannel) };
         // Lines of the rings still in L1 D (from .bss being cleared) must
         // not be written back over them later.
-        let (m, n) = (addr_of!(DMA_MEM) as usize, core::mem::size_of::<DmaMem>());
-        cache::writeback(m, n, false);
-        cache::invalidate(m, n, false);
+        let n = core::mem::size_of::<DmaMem>();
+        cache::writeback(mem, n, false);
+        cache::invalidate(mem, n, false);
 
         log!(
             "fs {} Hz: mclk div {} {}/{} -> mclk {} mHz, bck div {}",
@@ -433,6 +464,7 @@ impl I2s {
             _pins: pins,
             tx,
             rx,
+            mem,
             config,
             divider,
             running: false,
@@ -449,6 +481,12 @@ impl I2s {
     /// The configuration.
     pub fn config(&self) -> Config {
         self.config
+    }
+
+    /// Address and size of the stream's [`DmaMem`] (to check it against the
+    /// AHB-GDMA's memory window, for instance).
+    pub fn dma_mem(&self) -> (usize, usize) {
+        (self.mem, core::mem::size_of::<DmaMem>())
     }
 
     /// The MCLK divider in use.
@@ -497,12 +535,12 @@ impl I2s {
         unsafe { wr(INT_CLR, 0xF) };
 
         fence(Ordering::SeqCst);
-        self.tx.start(tx_desc_addr(0));
+        self.tx.start(tx_desc_addr(self.mem, 0));
         // Let the DMA fill the I2S TX FIFO before the bus starts.
         time::delay_us(50);
         update(TX_CONF);
         set_bits(TX_CONF, C_START);
-        self.rx.start(rx_desc_addr(0));
+        self.rx.start(rx_desc_addr(self.mem, 0));
         update(RX_CONF);
         set_bits(RX_CONF, C_START);
         self.running = true;
@@ -518,28 +556,28 @@ impl I2s {
     }
 
     fn build_rings(&mut self) {
-        let tx_buf = tx_buf_addr();
-        let rx_buf = rx_buf_addr();
+        let tx_buf = tx_buf_addr(self.mem);
+        let rx_buf = rx_buf_addr(self.mem);
         unsafe {
             core::ptr::write_bytes(ahb_dma::uncached(tx_buf) as *mut u8, 0, TX_RING);
         }
         for i in 0..TX_DESCS {
             set_desc(
-                tx_desc_addr(i),
+                tx_desc_addr(self.mem, i),
                 Descriptor {
                     dw0: Descriptor::dw0(DESC_LEN, DESC_LEN, true, true),
                     buf: (tx_buf + i * DESC_LEN) as u32,
-                    next: tx_desc_addr((i + 1) % TX_DESCS) as u32,
+                    next: tx_desc_addr(self.mem, (i + 1) % TX_DESCS) as u32,
                 },
             );
         }
         for i in 0..RX_DESCS {
             set_desc(
-                rx_desc_addr(i),
+                rx_desc_addr(self.mem, i),
                 Descriptor {
                     dw0: Descriptor::dw0(DESC_LEN, 0, false, true),
                     buf: (rx_buf + i * DESC_LEN) as u32,
-                    next: rx_desc_addr((i + 1) % RX_DESCS) as u32,
+                    next: rx_desc_addr(self.mem, (i + 1) % RX_DESCS) as u32,
                 },
             );
         }
@@ -595,12 +633,12 @@ impl I2s {
         let eof = self.tx.eof_desc_addr();
         if eof != self.tx_last_eof {
             self.tx_last_eof = eof;
-            let base = tx_desc_addr(0);
+            let base = tx_desc_addr(self.mem, 0);
             if eof >= base && eof < base + TX_DESCS * 12 && (eof - base).is_multiple_of(12) {
                 let idx = (eof - base) / 12;
                 let cur = (self.tx_done % TX_DESCS as u64) as usize;
                 let n = (idx + TX_DESCS - cur) % TX_DESCS + 1;
-                let buf = ahb_dma::uncached(tx_buf_addr());
+                let buf = ahb_dma::uncached(tx_buf_addr(self.mem));
                 for k in 0..n {
                     let d = (cur + k) % TX_DESCS;
                     unsafe { core::ptr::write_bytes((buf + d * DESC_LEN) as *mut u8, 0, DESC_LEN) };
@@ -646,7 +684,7 @@ impl I2s {
         }
         let pos = (self.tx_w % TX_RING as u64) as usize;
         let first = n.min(TX_RING - pos);
-        let buf = ahb_dma::uncached(tx_buf_addr()) as *mut u8;
+        let buf = ahb_dma::uncached(tx_buf_addr(self.mem)) as *mut u8;
         unsafe {
             core::ptr::copy_nonoverlapping(data.as_ptr(), buf.add(pos), first);
             core::ptr::copy_nonoverlapping(data.as_ptr().add(first), buf, n - first);
@@ -672,7 +710,7 @@ impl I2s {
         let mut closed = 0;
         for k in 0..RX_DESCS {
             let i = (self.rx_head + k) % RX_DESCS;
-            let dw0 = desc_dw0(rx_desc_addr(i));
+            let dw0 = desc_dw0(rx_desc_addr(self.mem, i));
             if dw0 & Descriptor::OWNER_DMA != 0 {
                 break;
             }
@@ -693,10 +731,10 @@ impl I2s {
         if !self.running {
             return 0;
         }
-        let buf = ahb_dma::uncached(rx_buf_addr()) as *const u8;
+        let buf = ahb_dma::uncached(rx_buf_addr(self.mem)) as *const u8;
         let mut n = 0;
         while n < out.len() {
-            let addr = rx_desc_addr(self.rx_head);
+            let addr = rx_desc_addr(self.mem, self.rx_head);
             let dw0 = desc_dw0(addr);
             if dw0 & Descriptor::OWNER_DMA != 0 {
                 break;
