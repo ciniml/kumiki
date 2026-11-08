@@ -41,7 +41,7 @@
  └───────────────────────────────────────────────┘
 ```
 
-## 1. ピクセル形式（`gfx-core::pixel`）
+## 1. ピクセル形式（`kumiki-gfx::pixel`）
 
 ```rust
 /// 送信順（パネルが受け取るバイト列）で表したピクセル形式
@@ -88,7 +88,7 @@ pub trait PixelSource<Dst: PixelFormat> {
 | `ColorIterSource<I>` | embedded-graphics の `fill_contiguous` に渡されるイテレータ |
 | `TransparentSource` | 透過色付きの転送 |
 
-## 2. バス層（`gfx-core::bus`）
+## 2. バス層（`kumiki-gfx::bus`）
 
 M5GFX の `IBus` を、Rust では次の 2 つのトレイトに分ける。
 
@@ -160,7 +160,7 @@ pub trait Transfer { fn is_done(&self) -> bool; fn wait(self) -> (Self::Bus, Sel
 - 最初のチャンクは 64B 程度と小さくし、そこから倍々に大きくして最大 4KB〜16KB まで増やす。
 - A を DMA で送っている間に B を fill し、`wait(A)` → `start(B)` の順で切り替える。
 
-## 3. パネル層（`gfx-panels`）
+## 3. パネル層（`kumiki-gfx-panels`）
 
 ```rust
 pub trait Panel {
@@ -244,10 +244,15 @@ pub trait FastDraw: DrawTarget {
 - async の世界では「RAM 上の Surface（Sprite / FrameBuffer）に同期で描き、`flush().await` / `blit_async().await` で送る」形にする。lcd-async や stackchan-rs の `AsyncDisplay` と同じ方針である（[02](02-local-assets.md), [03](03-ecosystem-graphics.md) §4）。
 - `Display<P>` には、`fill_rect_async` と `blit_async` を持つ `AsyncFastDraw` も実装する（バスが `asynch::PixelBus` の場合）。
 - 2 つの版でロジック（クリッピング、ウィンドウの計算、ソースの生成）は共有し、バスの呼び出しだけを分ける。`maybe-async` 系のマクロは依存とデバッグのしやすさを考えて**使わない**。必要なら、小さな自前マクロで両方の版を生成する。
+- **既定は async にするが、非同期ランタイムには依存しない**（決定事項）。
+  - gfx の各クレートは `embedded-hal-async` のトレイトと、`core::future` だけを使う。executor、`embassy-time`、タスクの起動（spawn）には依存しない。
+  - DMA の完了待ちは、HAL の割り込みと waker で実現する（esp-hal の async ドライバは executor から独立している）。
+  - 待ち時間が必要な箇所（パネルの初期化など）は、外から渡された `DelayNs` を使う。
+  - 詳細は [07](07-design-hwdesc.md) §7。
 
 ## 6. 可搬性（ESP32 以外）
 
-- `gfx-core` と `gfx-panels` は、`embedded-graphics-core`、`embedded-hal`（`DelayNs` と `OutputPin` のトレイトだけ）、`embedded-hal-async` だけに依存する。
+- `kumiki-gfx` と `kumiki-gfx-panels` は、`embedded-graphics-core`、`embedded-hal`（`DelayNs` と `OutputPin` のトレイトだけ）、`embedded-hal-async` だけに依存する。
 - RP2040/RP2350 では、`AsyncSpiBus` と embassy-rp の SPI DMA を組み合わせる。将来は PIO で i8080 バスを作る。
 - STM32 では、`AsyncSpiBus` を embassy-stm32 と組み合わせる。FMC（i8080）や LTDC（RGB）は、`FramebufferPanel` を実装する形で後から追加できる。
 - CI では thumbv6m（RP2040）、thumbv8m（RP2350）、riscv32imc（C3）でのビルド確認を必須にする。

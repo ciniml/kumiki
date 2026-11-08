@@ -1,311 +1,338 @@
-# 07. ハードウェア記述層（HWD: Hardware Description）の設計（案）
+# 07. ハードウェア記述層の設計（Device Tree ベース）
+
+> 決定事項（2026-11-08）: 記述の構文には **Device Tree Source（DTS）** を採用する。Linux で長年、Arm を中心とした多様なハードウェアに使われてきて記述力が実証されており、近年は Zephyr でも採用されているためである。以下、この層を **kumiki-dt** と呼ぶ（クレート名の方針は [09](09-crate-layout-license.md)）。
 
 ## 0. 問題設定
 
 no_std Rust では、HAL の抽象化（embedded-hal 1.0 / embedded-hal-async）と、チップの記述（esp-metadata、stm32-data）は整っている。しかし、**「このボードでは、どのバスがどのピンにあり、そこにどのデバイスがどのアドレスでつながり、リセット線や電源がどこから来るか」を表す標準的な層がない**。
 
-PC には ACPI があり、Linux や Zephyr には Device Tree がある。no_std Rust では、BSP ごとに手書きのコードでこれを表しているのが現状である（[04](04-ecosystem-bsp.md) §2、Tock の components、atsamd の `bsp_pins!`）。
-
-本章では、この層を **HWD** と呼び、ESP32 と M5Stack を最初の対象にしつつ、汎用の仕組みとして設計する。
+PC には ACPI があり、Linux や Zephyr には Device Tree がある。no_std Rust では、BSP ごとに手書きのコードでこれを表しているのが現状である（[04](04-ecosystem-bsp.md) §2）。kumiki-dt は、DTS で書いたボードの記述と、HAL のトレイトに対してジェネリックなドライバとを、**ビルド時に生成する型付きの Rust コード**で結び付ける。
 
 ```
  アプリ
    │  デバイスクラスのトレイト（Display / Touch / Imu / Power / ...）
- BSP（HWD から生成される）  ← 本章
+ ボード定義（DTS から生成されるコード）  ← 本章
    │  バインディング（compatible → Rust のドライバ型 + 生成方法）
- ドライバ（embedded-hal のトレイトに対してジェネリック）
-   │  embedded-hal / embedded-hal-async
- HAL（esp-hal, embassy-rp, embassy-stm32, ...）
+ ドライバ（embedded-hal / embedded-hal-async のトレイトに対してジェネリック）
    │
- チップの記述（esp-metadata, stm32-data）  ← 既存。HWD はここを再発明しない
+ HAL（esp-hal, P4 v1 用の自前 HAL, embassy-rp, embassy-stm32, ...）
+   │
+ チップの記述（esp-metadata など）→ SoC の .dtsi を生成する
 ```
 
-## 1. 先行事例と、そこから得た教訓
+## 1. 先行事例と教訓
 
-| 方式 | 例 | 長所 | 短所 |
-|---|---|---|---|
-| A. コードで記述する | Tock の components、atsamd/rp の `bsp_pins!`、assign-resources、esp-bsp（C） | 型安全で、追加コストがない。自由度が高い | 書き方が標準化されず、ツールで扱えない。ボードごとに似たコードが重複する |
-| B. データからビルド時にコード生成する | **Zephyr DT**（とその Rust 対応）、**Hubris** の app.toml、**Ariel OS の sbd**（YAML）、**esp-board-manager**（YAML→C）、**M5GFX の board_spec**（JSON→C++） | 標準化でき、検証ツールを作れる。生成結果は追加コストがない | スキーマとジェネレータの保守が要る |
-| C. 実行時にデータを解析する | Linux の FDT / ACPI | 1 つのバイナリで様々な構成に対応できる | 型が弱い（文字列で照合する）。ドライバはどのみち全部リンクされる。MCU では先例がほぼない |
+| 方式 | 例 | 本設計での扱い |
+|---|---|---|
+| A. コードで記述する | Tock の components、atsamd/rp の `bsp_pins!`、assign-resources | 生成されるコードの形として参考にする |
+| B. データからビルド時にコード生成する | **Zephyr DT とその Rust 対応**（zephyr-lang-rust）、Hubris の app.toml、Ariel OS の sbd、esp-board-manager、M5GFX の board_spec | **採用する方式** |
+| C. 実行時にデータを解析する | Linux の FDT / ACPI | 将来の拡張（§10） |
 
 出典
 
 - Zephyr: <https://docs.zephyrproject.org/latest/build/dts/howtos.html>、<https://github.com/zephyrproject-rtos/zephyr-lang-rust>
 - Hubris: <https://github.com/oxidecomputer/hubris/blob/master/build/i2c/src/lib.rs>
-- Ariel OS sbd: <https://github.com/ariel-os/sbd>、<https://github.com/ariel-os/ariel-os/tree/main/boards>
+- Ariel OS sbd: <https://github.com/ariel-os/sbd>
 - esp-board-manager: <https://github.com/espressif/esp-board-manager>
 - M5GFX board_spec: <https://github.com/m5stack/M5GFX/tree/master/extras/board_spec>
-- Linux の deferred probe: <https://docs.kernel.org/driver-api/driver-model/driver.html>
-- U-Boot of-platdata（DT を C の構造体に変換）: <https://docs.u-boot.org/en/latest/develop/driver-model/of-plat.html>
 
-### 教訓（設計に反映するもの）
+設計に反映する教訓
 
-1. **バスを親、デバイスを子とする木構造と、参照（phandle）でグラフを表す**（Zephyr DT）。リセット線や電源のように別のデバイスを指す参照は、初期化順序（依存関係の DAG）でもある。
-2. **初期化順序を生成時に検証する。** Zephyr では、DT の依存関係と初期化の優先度の食い違いがよくある失敗の原因になっており、後から `check_init_priorities.py` が追加された。HWD では順序そのものを依存グラフから生成する。
-3. **ドライバが見つからなければ生成を失敗させる**（Hubris）。型付きのアクセサを生成し、ペリフェラルは一度しか取り出せないようにする（所有権。zephyr-lang-rust の `get_instance()` と Ariel の `define_peripherals!`）。
-4. **スキーマは厳格にする**（`deny_unknown_fields`、本物の enum）。Hubris は TOML で enum を扱いにくかったため、トポロジーを任意フィールドの集まりに平坦化して妥協しており、その結果、不正な記述を書きやすくなっている。
-5. **I2C アドレスの表記を 1 つに決める**（7bit に統一する）。esp-board-manager の CoreS3 の記述では、7bit と 8bit の表記が混在している。
-6. **リビジョンごとの部品の差し替えをデータで表し、実行時の判別順序も生成する**（M5GFX の board_spec）。M5 製品は同じ型番の中で PMIC やパネルが変わる（[04](04-ecosystem-bsp.md) §10）。ビルド時に選ぶだけの方式（Zephyr HWMv2 の `board@rev`）では足りない。
-7. **チップの層とボードの層を分ける**（esp-metadata はチップだけを記述している）。
-8. **値ごとに出典と検証済みかどうかを持たせる**（M5GFX の `verified`）。
-9. **命令的な初期化を書ける抜け道が必要**（esp-board-manager の `setup_device.c`）。PMIC の手順のように、データでは書き切れないものがあるため。
-10. **後付けの追加（シールドやオーバーレイ）を表せること**（Zephyr の shields、esp-board-manager の `board_amend.yaml`）。M5 の Unit や Module がこれに当たる。
+1. **バスを親、デバイスを子とする木と、phandle による参照でグラフを表す**（DT そのもの）。リセット線や電源の参照は、初期化順序（依存関係の DAG）でもある。
+2. **初期化順序は依存グラフから生成する。** Zephyr では、DT の依存関係と手で付けた初期化の優先度との食い違いがよくある失敗の原因になっており、後から `scripts/build/check_init_priorities.py` で検査するようになった。kumiki-dt では最初から順序をグラフから生成する。
+3. **バインディングが見つからない compatible は生成エラーにする**（Hubris）。型付きのアクセサを生成し、デバイスは一度しか取り出せないようにする（zephyr-lang-rust の `get_instance()`、Ariel の `define_peripherals!`）。
+4. **I2C アドレスは DT の慣例どおり 7bit で書く**（`reg`）。esp-board-manager の YAML では 7bit と 8bit が混在しており、DT ならこの問題は起きにくい。
+5. **ロットごとの部品の違いと実行時の判別を表せること**（M5GFX の board_spec）。DT では、後述する Linux の「second source」の仕組みと、判別ルールを書くノードで表す（§4）。
+6. **チップの層とボードの層を分ける**（SoC の `.dtsi` と、ボードの `.dts`）。
+7. **命令的な初期化を書ける抜け道が必要**（esp-board-manager の `setup_device.c`）。DT 流に、glue ノード（固有の compatible を持ち、Rust のコードに結び付く）として表す（§6.4）。
 
-## 2. 方式の結論
+## 2. なぜ DTS か、そして DTS の弱点への対処
 
-**方式 B（ビルド時のコード生成）を主とし、実行時の判別は「生成された候補の中から選ぶ」形に限定する。**
-実行時にデータを解析する方式 C は、将来の拡張（§9）として、スキーマが両方に対応できるようにだけしておく。
-
-- 生成されるのは普通の Rust コードである。バインディングの型が合わなければコンパイルエラーになる。単一機種のビルドでは追加コストがなく、alloc も使わない。
-- 複数機種のビルド（機種ファミリー）では、違いのあるデバイスクラスだけを enum で切り替える（`AnyDisplay` など）。共通部分は 1 回だけ生成する。
-
-## 3. データモデル
-
-DT の考え方（ノード、`compatible`、`reg`、参照）を土台に、M5GFX の board_spec の考え方（choices / revisions / detect / provenance）を足す。
-
-### 3.1 要素
-
-| 要素 | 内容 |
+| 観点 | 評価 |
 |---|---|
-| `chip` | SoC とパッケージ（例: `esp32s3`）。ピンの妥当性はチップの記述（esp-metadata）で検証する |
-| `controller` | チップ内のペリフェラルのインスタンス（`i2c0`、`spi2`、`i2s0`、`lcd_cam`、`dsi`）。ピン、クロック、共有の方針、DMA チャネルを持つ |
-| `device` | ボード上のデバイス。`compatible`、`on`（親のバス）、`reg`（I2C の 7bit アドレス、または SPI の CS）、プロパティ、参照、`role`（アプリから見た役割。例: `display.main`）を持つ |
-| 参照 | `gpio = "&aw9523 p1_1 active-low"`、`supply = "&axp2101 aldo3"`、`irq = "&chip gpio21 falling"`、`backlight = "&axp2101 dldo1"` のように、他のデバイスの機能を指す |
-| `rail` | 電源のレール（PMIC のチャネル、GPIO で制御する LDO、常時オン）。電圧、立ち上げ順、立ち上がり後の待ち時間を持つ |
-| `connector` | 外部コネクタ（Port A/B/C、Grove、M-Bus）。オーバーレイ（Unit、Module）の接続先になる |
-| `variant` | 機種ファミリーの中の 1 機種。共通部分を継承し、差分（`select` / `override`）と判別ルール（`detect`）を持つ |
-| `provenance` | 値ごとの出典 URL と、検証済みかどうかの印 |
+| 記述力 | バスの木、phandle の参照、`#*-cells` による参照先ごとの引数、レギュレータ、GPIO、割り込み、コネクタ（nexus ノードと `gpio-map`）、オーバーレイ。Linux と Zephyr で実証済み |
+| 既存の資産 | Linux の vendor prefix と compatible の命名、レギュレータやタッチスクリーンなどの汎用バインディング、Zephyr の M5Stack ボード定義。例えば m5stack_core2 は `x-powers,axp192-regulator` と `x-powers,axp192-gpio` を使い、表示のリセットを AXP192 の GPIO4 経由で記述している（<https://docs.zephyrproject.org/latest/boards/m5stack/m5stack_core2/doc/index.html>） |
+| 学習コスト | Linux や Zephyr の経験者がそのまま読み書きできる |
+| 弱点 1: C プリプロセッサへの依存 | `#include` とマクロ（`GPIO_ACTIVE_LOW` など）は使うが、**C プリプロセッサの必要最小限（#include、#define、#if）を Rust で実装**し、外部ツールなしでビルドできるようにする |
+| 弱点 2: 型が弱い | バインディング（YAML）でプロパティの型と必須かどうかを宣言し、生成時に検証する（Zephyr と同じ） |
+| 弱点 3: 実行時の判別は表せない | 独自の性質は vendor prefix `kumiki,` を付けたプロパティとノードに限定し、標準の構文の範囲で表す（§4） |
 
-### 3.2 記述の例（構文は仮。CoreS3 を簡略化したもの）
+標準との互換性: kumiki-dt の DTS は、**標準の `dtc` でもエラーなくコンパイルできること**を CI で確かめる。独自の構文は追加しない。
 
-```toml
-[board]
-id = "m5stack-cores3"
-family = "m5stack-esp32s3"          # 同じチップで、まとめてビルドできるグループ
-chip = "esp32s3"
-provenance = "https://docs.m5stack.com/en/core/CoreS3"
+## 3. ファイル構成
 
-[controller.i2c_int]
-kind = "i2c"; instance = "I2C0"; sda = 12; scl = 11
-frequency = 400_000
-sharing = "auto"                     # 生成時に blocking / async の方針から選ぶ（§6）
-
-[controller.spi_lcd]
-kind = "spi"; instance = "SPI2"; sck = 36; mosi = 37; miso = 35
-dma = "auto"
-share_hooks = "m5_bsp::cores3::gpio35_miso_dc_mux"   # 抜け道（§7）
-
-[device.pmic]
-compatible = "x-powers,axp2101"; on = "i2c_int"; reg = 0x34
-rails = { aldo3 = { mv = 3300 }, dldo1 = { role = "backlight" }, bldo1 = { mv = 3300 } }
-
-[device.ioexp]
-compatible = "awinic,aw9523b"; on = "i2c_int"; reg = 0x58
-init = { p0_mode = "push-pull" }
-
-[device.lcd]
-compatible = "ilitek,ili9342c"; on = "spi_lcd"; cs = 3
-role = "display.main"
-dc = "&chip gpio35"                  # MISO と共用（share_hooks で切り替える）
-reset = "&ioexp p1_1 active-low"
-backlight = "&pmic dldo1"
-supply = "&pmic aldo3"
-props = { width = 320, height = 240, invert = true, rgb_order = "bgr", spi_hz = 40_000_000, read_hz = 16_000_000 }
-
-[device.touch]
-compatible = "focaltech,ft6336u"; on = "i2c_int"; reg = 0x38
-role = "touch.main"; reset = "&ioexp p0_0 active-low"; irq = "&ioexp p1_2"
-props = { follows = "lcd" }          # 座標系は lcd の回転に追従する
-
-[device.imu]
-compatible = "bosch,bmi270"; on = "i2c_int"; reg = 0x69; role = "imu.main"
-
-[device.rtc]
-compatible = "belling,bm8563"; on = "i2c_int"; reg = 0x51; role = "rtc.main"
-
-[device.spk]
-compatible = "awinic,aw88298"; on = "i2c_int"; reg = 0x36; role = "audio.out"
-reset = "&ioexp p0_2 active-low"; i2s = "i2s0"
-lazy = true                          # アプリが要求したときに初期化する（Zephyr の deferred-init に相当）
-
-[detect]                             # ファミリー内でこの機種を識別するルール（AND）
-steps = [
-  { i2c_read = { bus = "i2c_int", addr = 0x34, reg = 0x03, eq = 0x4A } },
-  { i2c_read = { bus = "i2c_int", addr = 0x58, reg = 0x10, eq = 0x23 } },
-]
-
-[[variant]]                          # CoreS3-SE: カメラと近接センサーがない
-id = "m5stack-cores3-se"
-remove = ["camera", "proximity"]
-detect.steps = [ { i2c_nack = { bus = "i2c_int", addr = 0x21 } } ]   # GC0308（SCCB）が応答しない
+```
+boards/dts/
+├─ include/kumiki/         gpio.h, irq.h, regulator.h …（定数。値は Linux / Zephyr の dt-bindings と一致させる）
+├─ soc/espressif/          esp32.dtsi, esp32s3.dtsi, esp32p4.dtsi …（esp-metadata から生成する。§5.2）
+├─ m5stack/
+│  ├─ cores3-common.dtsi
+│  ├─ cores3.dts           #include "cores3-common.dtsi"
+│  ├─ cores3-se.dts        /delete-node/ &camera; など
+│  ├─ atoms3.dts, atoms3r.dts, core2.dts, core2-v1_1.dts, tab5.dts, paper.dts …
+│  └─ overlays/            unit-env4.dtso, module-xxx.dtso …（Unit と Module を /plugin/ のオーバーレイとして記述する）
+└─ generic/                esp32s3-devkitc-st7789.dts, rp2040-pico-st7789.dts（汎用性の確認用）
+bindings/                  compatible ごとのバインディング（YAML）
 ```
 
-Core2 の PMIC の違い（v1.0 は AXP192、v1.1 は AXP2101）のような差は、`choices` で表す。
+## 4. 記述の例（CoreS3 を簡略化したもの）
 
-```toml
-[device.pmic]
-on = "i2c_int"; reg = 0x34
-choices = [
-  { compatible = "x-powers,axp192",  when = { i2c_read = { addr = 0x34, reg = 0x03, eq = 0x03 } } },
-  { compatible = "x-powers,axp2101", when = { i2c_read = { addr = 0x34, reg = 0x03, eq = 0x4A } } },
-]
-# lcd.reset なども choices ごとに付け替える（axp192: "&pmic gpio4"、axp2101: "&pmic aldo2"）
+```dts
+/dts-v1/;
+#include <soc/espressif/esp32s3.dtsi>
+#include <kumiki/gpio.h>
+#include <kumiki/irq.h>
+
+/ {
+    model = "M5Stack CoreS3";
+    compatible = "m5stack,cores3", "espressif,esp32s3";
+
+    chosen {                                   /* 役割（アプリから見た名前）。Zephyr の zephyr,display と同じ考え方 */
+        kumiki,display = &lcd;
+        kumiki,touch   = &touch;
+        kumiki,imu     = &imu;
+        kumiki,rtc     = &rtc;
+        kumiki,power   = &pmic;
+    };
+
+    lcd_backlight: backlight {
+        compatible = "kumiki,regulator-backlight";   /* PMIC のレール 1 本で輝度を変える */
+        power-supply = <&dldo1>;
+    };
+
+    kumiki,detect {                            /* 機種ファミリーの中でこの機種を識別するルール（すべてを満たすこと） */
+        compatible = "kumiki,board-detect";
+        pmic-id  { compatible = "kumiki,probe-i2c-reg"; device = <&pmic>;  register = <0x03>; expect = <0x4a>; };
+        ioexp-id { compatible = "kumiki,probe-i2c-reg"; device = <&ioexp>; register = <0x10>; expect = <0x23>; };
+    };
+};
+
+&i2c0 {                                        /* 内部 I2C */
+    status = "okay";
+    clock-frequency = <400000>;
+    pinctrl-0 = <&i2c0_int_pins>;              /* i2c0_int_pins: SDA=12, SCL=11（SoC の .dtsi 側で定義する） */
+
+    pmic: pmic@34 {
+        compatible = "x-powers,axp2101";
+        regulators {                           /* Linux / Zephyr の標準レギュレータバインディング */
+            aldo3: ALDO3 { regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; };
+            bldo1: BLDO1 { regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; };
+            dldo1: DLDO1 { regulator-name = "lcd-backlight"; };
+        };
+    };
+
+    ioexp: gpio@58 {
+        compatible = "awinic,aw9523b";
+        gpio-controller;
+        #gpio-cells = <2>;
+        interrupt-controller;
+        #interrupt-cells = <2>;
+    };
+
+    touch: touchscreen@38 {
+        compatible = "focaltech,ft6336u";
+        reset-gpios = <&ioexp 0 GPIO_ACTIVE_LOW>;               /* P0_0 */
+        interrupts-extended = <&ioexp 10 IRQ_TYPE_EDGE_FALLING>; /* P1_2 */
+        touchscreen-size-x = <320>;
+        touchscreen-size-y = <240>;
+    };
+
+    imu: imu@69 { compatible = "bosch,bmi270"; };
+    rtc: rtc@51 { compatible = "belling,bm8563", "nxp,pcf8563"; };   /* DT の互換リスト: 専用の binding がなければ pcf8563 で代用する */
+};
+
+&spi2 {
+    status = "okay";
+    pinctrl-0 = <&spi2_lcd_pins>;              /* SCK=36, MOSI=37, MISO=35 */
+    cs-gpios = <&gpio 3 GPIO_ACTIVE_LOW>;
+
+    lcd: display@0 {
+        compatible = "ilitek,ili9342c";
+        reg = <0>;
+        spi-max-frequency = <40000000>;
+        dc-gpios = <&gpio 35 GPIO_ACTIVE_HIGH>;                 /* MISO と共用。下の glue ノードで切り替える */
+        reset-gpios = <&ioexp 9 GPIO_ACTIVE_LOW>;                /* P1_1 */
+        power-supply = <&aldo3>;
+        backlight = <&lcd_backlight>;
+        width = <320>;
+        height = <240>;
+        kumiki,invert;
+        kumiki,rgb-order = "bgr";
+    };
+
+    lcd_dc_mux: pin-share {                    /* glue ノード: Rust で書いた固有の処理に結び付く（§6.4） */
+        compatible = "m5stack,cores3-miso-dc-share";
+        gpios = <&gpio 35 0>;
+    };
+};
+
+&i2s0 {
+    speaker: amplifier@36 { … };               /* AW88298。I2C 側の制御は &i2c0 の子として書き、相互に参照する */
+};
 ```
 
-## 4. 構文（入力形式）について
+### 4.1 ロットや部品の違いを表す 2 つの方法
 
-意味（§3 のデータモデル）と構文は分けて考える。構文の候補は次の 3 つ。
+**(a) 部品の差し替え: Linux の「second source」の慣例に従う。**
+Linux 6.13 で取り込まれた I2C の component prober は、候補となる部品のノードに `status = "fail-needs-probe"` を付けておき、起動時にプローブして応答した部品だけを有効にする仕組みである（ChromeOS の機器でタッチパネルやトラックパッドの差し替えに使われている）。
 
-| 候補 | 長所 | 短所 |
-|---|---|---|
-| **TOML（推奨）** | Rust の利用者にとって身近で、外部ツールが要らない。serde の `deny_unknown_fields` とタグ付き enum で厳格に検証できる | 深い入れ子が書きにくい。参照は文字列（`"&ioexp p1_1"`）で書くことになる |
-| DTS（Device Tree Source）の一部 | 標準的な構文で、phandle が言語に組み込まれている。Zephyr のボード定義を流用できる | choices / variants / detect は独自に拡張するしかない。Zephyr の記述は C プリプロセッサのマクロに依存している。Rust でパーサを用意する必要がある |
-| YAML | esp-board-manager や Ariel sbd と同じ形式で、取り込みが簡単 | 型の解釈に曖昧さがある（いわゆる Norway 問題）。インデントの間違いに弱い |
+- <https://github.com/torvalds/linux/blob/master/drivers/i2c/i2c-core-of-prober.c>
+- パッチの議論: <https://lkml.iu.edu/hypermail/linux/kernel/2410.1/00221.html>
 
-推奨は、**正の形式（source of truth）を TOML にし、取り込み用の変換器を用意する**こと。
+kumiki-dt は同じ表記を採用し、**生成時に候補をすべて含めておき、実行時にプローブして 1 つを選ぶ**コードを生成する。
 
-- M5GFX の board_spec（JSON、MIT）から変換する。リビジョン、部品の差し替え、判別順序の情報をそのまま活かせる。
-- esp-board-manager の YAML から変換する（約 35 の M5 機種をすばやく網羅できる。ライセンスは要確認）。
-- Zephyr の DTS から変換する（`dtoolkit` などで DTB を読む）。
-
-**利用者に決めてもらう事項**: 構文を TOML にするか DTS にするか（[11](11-roadmap.md) の未決事項 1）。
-
-## 5. バインディング（compatible → ドライバ）
-
-- バインディングは「`compatible` 文字列、Rust のドライバ型、生成関数、依存するもの（バス、ピン、電源）、プロパティのスキーマ、デバイスクラス」の組である。
-- サードパーティのドライバクレートは HWD を知らないので、バインディングは**別のマニフェストと、つなぎのクレート**で持つ。zephyr-lang-rust の `dt-rust.yaml`（augment）と同じ考え方である。
-
-```toml
-# hwd-bindings/bindings/focaltech,ft6336u.toml
-compatible = "focaltech,ft6336u"
-class = ["touch"]
-driver = { crate = "ft6336u-dd", version = "0.2" }
-bus = "i2c"                                   # I2cDevice（共有されたもの）を受け取る
-deps = { reset = "output-pin?", irq = "input-pin?" }
-ctor = "hwd_bindings::ft6336u::new"           # fn new(i2c, reset, irq, &Props) -> Result<impl Touch, _>
-props = { follows = { type = "ref", optional = true } }
+```dts
+&i2c0 {
+    imu_a: imu@68 { compatible = "tdk,mpu6886"; status = "fail-needs-probe"; kumiki,probe-group = "imu"; };
+    imu_b: imu@68 { compatible = "bosch,bmi270"; status = "fail-needs-probe"; kumiki,probe-group = "imu"; };
+};
+/ { chosen { kumiki,imu = &imu_a, &imu_b; }; };   /* 候補のうち有効になったもの */
 ```
 
-- 生成器は、`compatible` に対応するバインディングがなければ**生成を失敗させる**（Hubris と同じ）。
-- `ctor` は embedded-hal のトレイトでだけ型付けする。どの HAL の具体型を渡すかは、生成器が §6 の HAL アダプタから決める。
-- デバイスクラスのトレイト（`hwd-class`）: `Display`（gfx の `FastDraw` などを返す）、`Touch`、`Imu`、`Magnetometer`、`Rtc`、`PowerManager`（電池、充電、外部 5V、電源オフ）、`Rail`、`Backlight`、`AudioOut`、`AudioIn`、`Buttons`、`Led`、`GpioExpander`、`Camera`、`Storage`。
-- ドライバがクラスのトレイトを実装していない場合は、つなぎのクレートの中で newtype を作って実装する（孤児ルールへの対処。stackchan-rs の CoreS3 用の newtype と同じ。[02](02-local-assets.md)）。
+  - ノード名（`imu@68`）が重複すると dtc はエラーにするので、実際にはノード名を `imu-mpu6886@68` のように分ける。unit address の重複は警告で済み、有効でないノードについては dtc は警告しない。
+  - この方法が向くのは、**他のノードから参照されない部品**の差し替え（IMU、タッチ、パネルのコントローラ違い）である。
 
-## 6. HAL アダプタと生成されるコード
+**(b) 機種の違い: ボードの DTS を分け、判別ルールを持たせる。**
+Core2 の v1.0（AXP192）と v1.1（AXP2101）は、LCD のリセット線の接続先（AXP192 の GPIO4 か、AXP2101 の ALDO2 か）など、**他のノードからの参照まで変わる**。このような違いは `core2.dts` と `core2-v1_1.dts` に分けて書き、共通部分は `.dtsi` にまとめ、それぞれに `kumiki,detect` を書く。複数のボードを 1 つのバイナリにまとめる方法は §6.3。
 
-### 6.1 HAL アダプタ（汎用性の要）
+## 5. バインディングと SoC の記述
 
-生成器は特定の HAL のことを知らない。HAL ごとに「コントローラの作り方」を表すテンプレートを、小さなクレートで用意する。
+### 5.1 バインディング（YAML）
 
-- `hwd-hal-esp`: `i2c!(p.I2C0, sda=p.GPIO12, scl=p.GPIO11, hz=400_000)` → `esp_hal::i2c::master::I2c`、`spi_dma!(...)`、`i2s!(...)`、`pin_out!(...)`、`efuse_pkg()` など
-- `hwd-hal-rp`（embassy-rp）、`hwd-hal-stm32`（embassy-stm32）は後から追加できる構造にする。
-- ピンの妥当性（存在するか、機能が合っているか、重複していないか）は、チップの記述（esp-metadata-generated の `for_each_gpio!` など）を使って生成時に検証する。
+Zephyr のバインディングの書式を土台にし、Rust 用の `kumiki:` セクションを追加する。
 
-### 6.2 生成されるコードの形（単一機種の場合）
+```yaml
+# bindings/focaltech,ft6336u.yaml
+compatible: "focaltech,ft6336u"
+include: [i2c-device.yaml, touchscreen-common.yaml]
+properties:
+  reset-gpios:          { type: phandle-array, required: false }
+  interrupts-extended:  { type: phandle-array, required: false }
+kumiki:
+  class: [touch]                                  # デバイスクラス（kumiki-class のトレイト）
+  driver: { crate: "ft6336u-dd", version: "0.2" }
+  ctor: "kumiki_bindings::ft6336u::new"           # fn new(i2c, reset: Option<impl OutputPin>, irq: Option<impl Wait>, &Props) -> Result<impl Touch, _>
+  provides: []                                    # gpio-controller なら、ここで GPIO を提供することを宣言する
+```
+
+- プロパティの型、必須かどうか、`include` による共通化は Zephyr と同じにする。Zephyr のバインディング（Apache-2.0）にあるプロパティ定義は、出典を明記して流用できる。
+- `compatible` 文字列は、Linux / Zephyr に既存のものがあればそれを使う（`x-powers,axp2101`、`ilitek,ili9342c`、`focaltech,ft6236` 系など）。ないものだけ、メーカーの vendor prefix で新しく付ける。
+- サードパーティのドライバクレートは kumiki のことを知らないので、つなぎのコード（`ctor`）は `kumiki-bindings` クレートにまとめる。zephyr-lang-rust の `dt-rust.yaml`（augment）と同じ考え方である。
+- バインディングのない compatible は、生成時にエラーにする。ただし、互換リストの後ろの候補に binding があれば、それを使う。
+- 汎用の標準バインディング（`gpio-keys`、`gpio-leds`、`pwm-backlight`、`regulator-fixed`、`regulator-gpio`）にも対応する。これで、M5 以外のボードもそのまま書ける。
+
+### 5.2 SoC の .dtsi（チップの層）
+
+- ESP32 系の `.dtsi` は、**esp-metadata（esp-hal のチップ記述）から生成**する。内容は、ペリフェラルのノード（`i2c0`、`spi2`、`i2s0`、`lcd_cam`、`ledc`、`dsi` など）、`gpio` コントローラ（ESP では GPIO マトリクスでほぼ任意のピンに割り当てられる）、pinctrl の定義。
+  - Zephyr の ESP32 用 `.dtsi` は hal_espressif のマクロに依存しているので、そのままは使わず、参照するだけにする。
+- pinctrl は、Zephyr の `pinctrl-0` / `pinctrl-names` の構造に合わせつつ、中身は単純な「信号名 = ピン番号」で書く（例: `i2c0_int_pins: i2c0-int { sda = <12>; scl = <11>; bias-pull-up; };`）。
+- ピンの検証（存在するか、使えない用途に割り当てていないか、二重に割り当てていないか）は、生成時に esp-metadata のピン情報で行う。
+- 他のチップ（RP2040、STM32）用の `.dtsi` は、それぞれのメタデータから作るか、手で書く。
+
+## 6. コード生成
+
+### 6.1 処理の流れ（`kumiki-dtgen`。ホスト上で動く）
+
+1. 前処理: `#include`、`#define`、`#if` を Rust で実装した前処理器で展開する。
+2. 構文解析: DTS v1 の構文を解析し、`/delete-node/`、`/delete-property/`、ラベル、オーバーレイ（`/plugin/`、`&label { }`）を処理する。
+3. 合成: SoC の `.dtsi`、ボードの `.dts`、オーバーレイの順に重ねる。
+4. 検証: バインディングによる型の検査、phandle の解決、ピンの検証、unit address の検査、循環参照の検出を行う。
+5. 依存グラフ: `*-supply`、`*-gpios`、`interrupts-extended`、`backlight`、親バスへの依存を辺とする DAG を作り、トポロジカルソートで初期化順序を決める。
+6. コード生成: `devicetree` モジュール（定数、型エイリアス）、`Devices` 構造体、`init()`、判別関数を出力する。
+7. 補助的な出力
+   - 標準の `dtc` で読める、合成済みの DTS と DTB（デバッグ用、将来の実行時方式用）
+   - ピンの割り当て表
+
+- `build.rs` から呼べるライブラリと、CLI（`kumiki-dt check | gen | pintable | dump`）の両方として提供する。
+- リポジトリ内のボード定義から生成したコードは**コミットしておく**（esp-metadata-generated と同じ方式。レビューしやすく、docs.rs でも見える）。CI では、生成し直した結果に差分が出ないことを確かめる。ユーザーが自分のボードを書く場合は `build.rs` で生成する。
+
+### 6.2 生成されるコード（単一のボードの場合）
 
 ```rust
 // 生成されたコード（概略）
+pub mod devicetree {
+    pub mod nodes { pub mod lcd { pub const SPI_MAX_FREQUENCY: u32 = 40_000_000; pub const WIDTH: u16 = 320; /* … */ } }
+    pub mod chosen { pub use super::nodes::lcd as display; /* … */ }
+}
+
 pub struct Devices {
-    pub display: DisplayMain,          // 型エイリアス。具体型は Display<DcsPanel<EspSpiDmaBus, Ili9342c>>
-    pub touch:   TouchMain,
-    pub imu:     ImuMain,
-    pub rtc:     RtcMain,
-    pub power:   PowerMain,            // AXP2101 + レール
-    pub audio_out: Lazy<AudioOutMain>, // lazy = true
+    pub display: Display,              // 型エイリアス: kumiki_gfx::Display<DcsPanel<EspSpiDmaBus<'static>, Ili9342c>>
+    pub touch:   Touch,
+    pub imu:     Imu,
+    pub rtc:     Rtc,
+    pub power:   Power,
     pub buttons: Buttons,
+    pub tasks:   BackgroundTasks,      // バックグラウンドで回す処理（ランタイムに依存しない Future。§7）
 }
-pub struct Resources { /* DMA バッファ、共有バスのセルなど。StaticCell で 'static にする */ }
+pub struct Resources { /* DMA バッファ、共有バスのセル（StaticCell） */ }
 
-pub fn init(p: esp_hal::peripherals::Peripherals, r: &'static mut Resources)
-    -> Result<Devices, InitError>
-{
-    // 依存グラフをトポロジカルソートした順序で、まっすぐ並んだコードとして生成される
-    let i2c_int = hwd_hal_esp::i2c!(p.I2C0, sda = p.GPIO12, scl = p.GPIO11, hz = 400_000);
-    let i2c_int = r.i2c_int.init(Mutex::new(i2c_int));               // 共有の方針で決まる
-    let pmic = hwd_bindings::axp2101::new(I2cDevice::new(i2c_int), &PMIC_PROPS)?;
-    pmic.rail(Aldo3).enable(3300)?;  delay_ms(PMIC_RAIL_DELAY);
-    let ioexp = hwd_bindings::aw9523b::new(I2cDevice::new(i2c_int), &IOEXP_PROPS)?;
-    let lcd_reset = ioexp.pin(P1_1).into_output(ActiveLow);
-    // ...lcd → touch → imu → rtc の順
-    Ok(Devices { /* ... */ })
+pub async fn init(p: Peripherals, r: &'static mut Resources, delay: impl DelayNs) -> Result<Devices, InitError> {
+    // 依存グラフのトポロジカル順に、まっすぐ並んだコードとして生成される
+    // i2c0 → pmic（aldo3, bldo1 を立ち上げる）→ ioexp → lcd（reset, power-supply）→ backlight → touch → imu → rtc
 }
 ```
 
-- 参照の解決や順序の決定は、すべて生成時に済ませる。循環参照や、宣言されていない参照は生成エラーにする。
-- `Devices` の各フィールドは別々に所有できる。そのため、embassy のタスクにそれぞれを `'static` で渡せる。Board トレイトにゲッターを生やす形にしないのはこのためである（[08](08-design-bsp.md)）。
+### 6.3 機種ファミリー（1 つのバイナリで複数のボードに対応する）
 
-### 6.3 機種ファミリーの場合（1 つのバイナリで複数機種に対応する）
-
-```rust
-pub enum BoardId { CoreS3, CoreS3Se, AtomS3, AtomS3R, Cardputer, StickS3 /* ... */ }
-pub enum AnyDisplay { Ili9342c(Display<..Ili9342c>), Gc9107(Display<..Gc9107>), St7789(Display<..St7789>) }
-// AnyDisplay は DrawTarget / FastDraw / hwd_class::Display を match で委譲して実装する（生成）
-
-pub fn init(p: Peripherals, r: &'static mut Resources) -> Result<(BoardId, Devices), InitError> {
-    let id = detect(&mut p_shared)?;   // 生成された判別手順の決定木
-    match id {                         // match の腕ごとに、ペリフェラルを別々の用途で move できる
-        BoardId::CoreS3 => cores3::init(p, r),
-        BoardId::AtomS3 => atoms3::init(p, r),
-        // ...
-    }
-}
-pub struct Devices { pub display: AnyDisplay, pub touch: Option<AnyTouch>, pub imu: Option<AnyImu>, /* ... */ }
-```
-
-- ピンの型は `AnyPin` / `degrade()` で揃える（単一機種の場合は具体型のままでよい）。
-- 判別手順の生成
+- ビルドの単位は「同じチップのボードの集合」。どのボードを含めるかは、Cargo の feature（`board-m5stack-cores3` など）で選ぶ。指定がなければ、そのチップのボードをすべて含める。
+- 生成器は、各ボードの `kumiki,detect` と eFuse の情報から**判別の決定木**を作る。
   1. eFuse のパッケージ種別（と P4 の rev）で候補を絞る。
-  2. 電源保持の GPIO（StickC Plus2 の GPIO4 など）を最初に立てる。
-  3. 安全なプローブ（I2C の ACK、ID レジスタ）を行う。
+  2. 電源保持の GPIO を立てる。
+  3. I2C の ID レジスタをプローブする。
   4. パネル ID（RDDID）を読む。
-  - 「他の機種で出力として使われているピンを駆動しない」順序を、生成時の制約解決で決める。M5GFX の `detector_order.json` に相当する。
-  - 判別結果は RTC メモリかフラッシュにキャッシュしてよい（M5GFX の NVS と同じ。既定は無効）。
-- **ビルドの単位**: ファミリーは同じチップの中に限る。ターゲットトリプルと esp-hal のチップ feature はビルド時に決まるので、ESP32 と S3 を 1 つのバイナリにすることはできない。
+  - 「他のボードで出力として使われているピンを駆動しない」順序を制約として解く。M5GFX の `detector_order.json` に相当する。
+- `Devices` の各フィールドは、ボードによって型が違えば `AnyDisplay` などの enum に、ボードによって存在しなければ `Option` にする。enum のトレイト実装は、match による委譲として生成する。
+- ピンの型は `AnyPin` に揃える。match の腕ごとに、同じペリフェラルを別の用途で move できる。
 
-## 7. 共有バス、相互参照、抜け道
+### 6.4 共有バス、相互参照、glue ノード
 
-- **I2C の共有**: 生成時の方針で選ぶ。
-  - async: `embassy-embedded-hal` の `I2cDeviceWithConfig` + `embassy_sync::Mutex`。デバイスごとの `frequency` をここに反映する。
-  - blocking: `embedded-hal-bus` の `CriticalSectionDevice`（マルチコア向け）または `RefCellDevice`。
-- **SPI の共有**
-  - 表示が DMA で専有するのを基本にする。
-  - SD カードなどと共有する場合は、`SpiDevice` を共有バス経由で渡す。
-  - ピンの多重化（CoreS3 の GPIO35）は、`share_hooks` でトランザクションの前後に呼ぶ関数を差し込む。
-  - SPI モードの異なるデバイスの共有には未解決の課題がある（embedded-hal #608）ので、HWD は `mode` をデバイスごとに持たせる。
-- **ほかのデバイスの機能を指す参照**: エキスパンダや PMIC のピン、レールを `OutputPin`、`InputPin`、`SetDutyCycle`、`Rail` として取り出せるよう、バインディングに `provides`（例: aw9523b は 16 本の GPIO を提供する）を宣言する。生成器は、取り出す側と使う側の型を合わせる。
-- **抜け道（命令的なフック）**
-  - `hook = "path::fn"` で、指定した段階（電源投入の後、判別の後、初期化の後）にユーザーの Rust 関数を呼ぶ。
-  - 引数は、その時点までに生成されたデバイスへの参照で、型付けされる。
-  - 例: CoreS3 で 5V 昇圧を有効にするかどうかの判断や、Tab5 の PI4IOE の危険なビット（[02](02-local-assets.md)）を保護する処理。
+- **I2C の共有**: 非同期のビルドでは、`embassy-embedded-hal` の `I2cDeviceWithConfig` と `embassy-sync` の `Mutex` を使う。どちらも executor に依存しない（§7）。デバイスノードの `clock-frequency` は、デバイスごとの設定に反映する。ブロッキングのビルドでは、`embedded-hal-bus` の `CriticalSectionDevice` を使う。
+- **SPI の共有**: 表示が DMA で専有するのを基本にする。同じバスに SD カード（`mmc-spi-slot`）などがある場合は、共有のラッパーを生成する。SPI モードの異なるデバイスの共有には未解決の課題がある（embedded-hal #608）ので、モードはデバイスごとに持つ。
+- **GPIO・割り込み・レギュレータの提供側と使用側**
+  - `gpio-controller` を宣言したノード（AW9523、AXP192 の GPIO、PI4IOE5V6408）は、バインディングの `provides` で `OutputPin` / `InputPin` / `Wait` を提供する。
+  - `*-gpios` で参照する側は、それを受け取る。
+  - レギュレータの参照（`*-supply`）は、`Rail` トレイトで受け取る。
+- **glue ノード**: DT で素直に書けない命令的な処理は、専用の compatible を持つノードとして記述し、そのバインディングが Rust の関数に結び付く。依存グラフに参加するので、実行される順序も保証される。
+  - 例: CoreS3 の GPIO35（MISO と D/C の共用）、5V 昇圧の判断
+  - 例: Tab5 の PI4IOE の「触ると電源が落ちる」ビットの保護（`kumiki,protected-lines = <4>;`）
 
-## 8. オーバーレイ（Unit、Module、ユーザーによる拡張）
+## 7. 非同期ランタイムに依存しないこと
 
-- オーバーレイは `connector` を参照して、デバイスを追加するファイルである（例: Port A の I2C に ENV IV Unit をつなぐ）。
-  - Cargo の feature または環境変数（`HWD_OVERLAYS`）で指定する。
-  - ユーザーのクレートの `build.rs` から指定することもできる。
-- `optional = true` を付けたデバイスは、実行時にプローブして見つかった場合だけ `Option::Some` になる（Hubris の `removable` と `validate` に相当）。
-- コネクタの種類（Grove I2C、UART など）とピンの対応は、M5GFX の `connector_types` を参考にする。
+決定事項: async を既定にするが、**非同期ランタイムを embassy に固定しない**。
 
-## 9. 将来: 実行時に解析するテーブル（ACPI のような方式）
+- ドライバと生成されるコードは、`embedded-hal-async` のトレイトだけを使う。待ち時間は、外から渡された `DelayNs` を使う。
+- 同期の部品
+  - **`embassy-sync`**（Mutex、Signal、Channel）は executor から独立した no_std のライブラリで、waker さえあれば任意の executor で動く。RTIC v2、esp-rtos、embassy-executor のどれでも使える。共有バス（`embassy-embedded-hal`）もこれに乗る。
+  - 依存を減らしたい場合に備えて、`critical-section` だけで済む簡易な実装も用意する。
+- 時刻: `embassy-time` は使わない（グローバルなタイマードライバを要求するため）。代わりに、最小限の `Clock` トレイト（`now() -> Instant`）を定義し、embassy-time、rtic-monotonics、esp-hal の `Instant` に対するアダプタを用意する。
+- **タスクの起動（spawn）はライブラリの中で行わない。** バックグラウンドで回す処理（ボタンのポーリング、EPD の更新、オーディオのストリーミング）は、`Devices::tasks` が持つ `async fn run(&mut self)` の Future として返す。アプリは、自分の使うランタイムで spawn または join する。
+  - 補助として、`embassy` feature で `#[embassy_executor::task]` のラッパーを、`rtic` feature で RTIC 向けの例を用意する。
+- 割り込みと waker: esp-hal の async ドライバは、割り込みハンドラと `AtomicWaker` で実装されており、executor から独立している。P4 v1 向けの自前 HAL（§9）も同じ作りにする。
+- ブロッキング版: 同じ DTS から、`init_blocking()` と、ブロッキングの共有バスを使う版を生成できるようにする（feature で選ぶ）。
 
-- 同じデータモデルを、コンパクトなバイナリ表現（`dtoolkit` が扱える FDT、または独自の postcard 形式）にしてフラッシュのパーティションに置き、`hwd-runtime` が読み取って `Any*` を組み立てる。これで、自作の基板向けにファームウェアを作り直さずに済む。
-- ただし、ドライバはすべてリンクされ、型の検証は実行時になる。そのため v1 では作らない。ここではスキーマが両方の方式に耐えることだけを確認しておく。
+## 8. オーバーレイ（Unit、Module、ユーザーによる追加）
 
-## 10. 汎用性の確認方法
+- 外部コネクタ（Port A/B/C、Grove、M-Bus）は、Zephyr の Arduino ヘッダーと同じく nexus ノード（`gpio-map`）と、ラベルを付けたバス（`&port_a_i2c`）で記述する。
+- Unit や Module は、`/plugin/` 形式のオーバーレイ（`.dtso`）として、コネクタのラベルにデバイスを追加する。
+- `status = "fail-needs-probe"` を付けると、実行時にプローブして見つかった場合だけ `Option::Some` になる（取り外しのできる Unit 向け）。
+- オーバーレイは Cargo の feature、`KUMIKI_DT_OVERLAYS` 環境変数、またはユーザーのクレートの `build.rs` で指定する。
 
-- M5 以外に、少なくとも次の 2 つのボードを HWD で記述し、同じアプリが動くことを確かめる。
-  - ESP32-S3-DevKitC + SPI の ST7789 モジュール
-  - RP2040（Pico）+ ST7789。`hwd-hal-rp` を使い、embassy-rp で動かす。
-- 生成器の単体テストでは、ゴールデンファイル（生成されたコードのスナップショット）を比較する。不正な記述（循環、ピンの重複、未知の compatible、アドレスの範囲外）では生成が失敗することも確かめる。
-- ツールの CLI（`hwd check / resolve / gen / pintable`）を用意し、CI で全機種の記述を検証する。M5GFX の board_spec CLI と同じ考え方である。
+## 9. Tab5（ESP32-P4 rev v1）と HAL アダプタ
 
-## 11. 既存の仕組みとの関係
+- 決定事項: 手元の Tab5 は **rev v1** である。esp-hal は rev v3 以降にしか対応しない（[04](04-ecosystem-bsp.md) §1）ため、Tab5 では esp-hal を使えない。
+- kumiki-dt は特定の HAL を前提にせず、HAL アダプタ（`kumiki-hal-*`）を通してコントローラを作る。このため、Tab5 用には別の HAL を差し込める。
+  - **案 1**: コミュニティのフォーク `esp-hal-p4-pre-v3`（<https://github.com/naoNao89/esp32p4-pre-v3-kit>）を評価する。対象は rev 1.3 で、rev v1.0 で動くかどうかは確認していない。
+  - **案 2（本命）**: tab5-os のレジスタ直叩き実装（I2C、GPIO、PSRAM、DSI、GDMA の LLI リング、PPA/DMA2D）を、embedded-hal のトレイトを実装した小さな HAL クレート（`kumiki-p4v1-hal`）として切り出す（[02](02-local-assets.md)）。
+- **Tab5 は、esp-hal 以外の HAL でも kumiki-dt が成り立つことを確かめる最初の実例になる。**
 
-| 既存の仕組み | HWD との関係 |
-|---|---|
-| esp-metadata / stm32-data | チップの層として参照する（ピンの検証、ペリフェラル名） |
-| M5GFX board_spec | 取り込み元（MIT）。リビジョンと判別の考え方を踏襲する |
-| esp-board-manager | 取り込み元（約 35 機種）。ライセンスは要確認 |
-| Zephyr DT | データモデルの土台。DTS からの取り込みは任意 |
-| Ariel OS sbd | 目的が近い（「他プロジェクトでも使えることを期待」と明記している）。デバイスの記述が入ったら、相互に変換できるようにするか合流するかを検討する（[05](05-build-vs-contribute.md)） |
-| device-driver クレート | ドライバの**レジスタ**の記述（HWD はボードの**トポロジー**の記述）。不足しているドライバを新しく書くときに使う |
+## 10. 将来: 実行時に解析する方式（ACPI のような方式）
+
+DTS を採用したことで、同じ記述を DTB にしてフラッシュのパーティションに置き、実行時に読む方式（`dtoolkit` や `fdt` で、alloc なしで解析できる）にも自然に拡張できる。ただし、ドライバはすべてリンクされ、型の検証は実行時になるので、v1 では作らない。
+
+## 11. 汎用性の確認
+
+- 生成器のテスト
+  - ゴールデンファイル（生成されたコードのスナップショット）を比較する。
+  - 不正な記述（循環、ピンの重複、未知の compatible、型の誤り）で生成が失敗することを確かめる。
+  - 同じ DTS が標準の `dtc` でもコンパイルできることを CI で確かめる。
+- M5 以外のボード（ESP32-S3-DevKitC + ST7789、RP2040 + ST7789）と、esp-hal 以外の HAL（Tab5 の P4 v1 用 HAL、embassy-rp）で、同じ仕組みが動くことを確かめる。

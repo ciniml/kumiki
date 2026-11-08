@@ -1,8 +1,19 @@
 # 11. マイルストーンと計画
 
+## 決定事項（2026-11-08）
+
+| 項目 | 決定 |
+|---|---|
+| ハードウェア記述の構文 | **Device Tree Source（DTS）**（[07](07-design-hwdesc.md)） |
+| クレート名 | **M5 を付けない**。仮の接頭辞は `kumiki`（[09](09-crate-layout-license.md)） |
+| 非同期 | **async を既定にする。非同期ランタイムは embassy に固定しない**（[07](07-design-hwdesc.md) §7） |
+| Tab5 | 手元の機体は **ESP32-P4 rev v1**。esp-hal は使えないので、tab5-os 由来の自前 HAL で対応する（[07](07-design-hwdesc.md) §9） |
+| ライセンス | **MIT OR Apache-2.0**（Rust の標準） |
+| 外部との連携 | **行わない**。まず利用者がよく使うボードの定義から書く（[08](08-design-bsp.md) §7） |
+
 ## 進め方の方針
 
-- **コード生成器は、手書きのコードを先に作ってから作る。** M2 で「生成されるはずの形」のコードを CoreS3 と AtomS3 向けに手で書き、M3 でそれを再現する生成器を作る（生成結果をゴールデンファイルとして比較する）。生成器を先に作ると、実際のドライバの組み合わせで困る点（所有権、共有バス、ピンの型）を後から知ることになり、作り直しが増えるためである。
+- **コード生成器は、手書きのコードを先に作ってから作る。** M2 で「生成されるはずの形」のコードを CoreS3 と AtomS3 向けに手で書き、M3 でそれを DTS から再現する生成器を作る（生成結果をゴールデンファイルとして比較する）。生成器を先に作ると、実際のドライバの組み合わせで困る点（所有権、共有バス、ピンの型）を後から知ることになり、作り直しが増えるためである。
 - 各マイルストーンの終わりに、ベンチマークの結果を `doc/bench-results/` に残す。
 
 ## マイルストーン
@@ -10,76 +21,77 @@
 ### M0: 土台と基準値
 
 - cargo のワークスペース、CI を用意する。
-  - ビルドの対象: esp32、esp32s3、esp32c6、thumbv6m（RP2040）
-  - CI で回すもの: fmt、clippy、host 上のテスト
+  - ビルドの対象: esp32、esp32s3、riscv32imac（P4）、thumbv6m（RP2040）
+  - CI で回すもの: fmt、clippy、ホスト上のテスト
 - ツールチェインの手順を文書化する（espup、GCC 15.2 系のリンカ）。
 - **M5GFX のベンチマークのスケッチ**（B1〜B7、[10](10-performance-plan.md)）を作り、CoreS3 と AtomS3 で基準値を取る。
 - 完了の条件: M5GFX の基準値の表ができていること。
 
 ### M1: グラフィックの中核
 
-- `gfx-core`: ピクセル形式、`PixelSource`、Bus/Panel のトレイト、`Display`、`Sprite`（等倍コピーと透過）、`FastDraw`
-- `gfx-panels`: `DcsPanel` + ILI9342C、GC9107（ST7789 も入れられれば入れる）
-- `gfx-bus-esp`: `EspSpiDmaBus`（`write_buffer` を使った A/B のパイプライン、`write_repeat`）
-- `gfx-bus-ehal`: `SpiDeviceBus` と `AsyncSpiBus`
+- `kumiki-gfx`: ピクセル形式、`PixelSource`、Bus/Panel のトレイト、`Display`、`Sprite`（等倍コピーと透過）、`FastDraw`
+- `kumiki-gfx-panels`: `DcsPanel` + ILI9342C、GC9107
+- `kumiki-gfx-bus-esp`: `EspSpiDmaBus`（`write_buffer` を使った A/B のパイプライン、`write_repeat`）
+- `kumiki-gfx-bus-ehal`: `SpiDeviceBus` と `AsyncSpiBus`
 - B1〜B4 と B8 を測る。
 - 完了の条件: CoreS3 で B2 が M5GFX の 80% 以上。
 
 ### M2: 最初のマイルストーン（CoreS3 と AtomS3 で同じアプリが動く）
 
-- `hwd-class`（Display、Touch、Power、Buttons、Imu の最小限のトレイト）
-- `m5-bsp`（`chip-esp32s3`）を、生成されるはずの形で**手書き**する。
-  - 機種の判別（AXP2101 + AW9523 があれば CoreS3、なければ GC9107 の RDDID を読んで AtomS3）
+- `kumiki-class`: Display、Touch、Power、Buttons、Imu の最小限のトレイト（ブロッキング版と async 版）
+- `kumiki-boards`（`chip-esp32s3`）を、生成されるはずの形で**手書き**する。
+  - ボードの判別: AXP2101 と AW9523 があれば CoreS3、なければ GC9107 の RDDID を読んで AtomS3
   - CoreS3: AXP2101 と AW9523 による電源投入、GPIO35 の切り替え、FT6336U、BMI270
   - AtomS3: PWM のバックライト、GPIO41 のボタン、MPU6886（ドライバを新しく書く）
   - ボタンは共通のビットマスクで扱う（CoreS3 は電源キーとタッチ領域、AtomS3 は GPIO）
+  - バックグラウンドの処理は、ランタイムに依存しない Future（`Devices::tasks`）として返す。
 - `examples/same-app`: **1 つのバイナリ**が CoreS3 と AtomS3 の両方で起動する。画面の大きさに合わせて描画内容を変え、ボタンかタッチで画面を切り替え、IMU の値を表示する。
 - **完了の条件**
-  1. 同じバイナリ（`chip-esp32s3` で、機種の feature は指定しない）が両方の機種で動く。
-  2. 全画面の DMA 転送（B2）が、両方の機種で M5GFX の **80% 以上**の fps を出す。
+  1. 同じバイナリ（`chip-esp32s3` で、ボードの feature は指定しない）が両方のボードで動く。
+  2. 全画面の DMA 転送（B2）が、両方のボードで M5GFX の **80% 以上**の fps を出す。
   3. B1、B3、B4 も 80% 以上を出す。B5、B9 は測定して記録する。
-  4. blocking 版と async（embassy）版の両方の見本がある。
+  4. 同じアプリが **2 種類の実行環境**で動く: embassy-executor と、embassy を使わない最小の executor（`block_on` と `join` で回す簡易なもの）。さらに、ブロッキング版の見本もある。
 
-### M3: HWD 生成器 v0
+### M3: kumiki-dt v0（DTS からの生成）
 
-- TOML のスキーマ（`hwd-model`）、バインディングのマニフェスト、`hwd-gen`（`check / gen / pintable`）
-- **M2 の手書きのコードを再現**し、ゴールデンファイルで比較する。
-- 記述を追加するだけで Cardputer と AtomS3R に対応できることを示す。ここで手書きのコードは書かない（HWD の価値を確かめるため）。
-- 汎用性の確認として、ESP32-S3-DevKitC + ST7789、RP2040 + ST7789（`hwd-hal-rp`）も記述して動かす。
-- M5GFX の board_spec から TOML に変換する取り込み器（試作）を作る。
+- `kumiki-dt`: 前処理器（#include、#define、#if）、DTS v1 の構文解析、`/delete-node/`、ラベル、オーバーレイ、合成、検証
+- `boards/bindings/*.yaml`（Zephyr の書式に `kumiki:` セクションを足したもの）と `kumiki-bindings`
+- `kumiki-dtgen`: 依存グラフ、初期化順序、`Devices`、`init()`、判別の決定木を生成する。CLI は `check / gen / pintable / dump`。
+- esp-metadata から `esp32s3.dtsi` と `esp32.dtsi` を生成する。
+- **M2 の手書きのコードを、CoreS3 と AtomS3 の DTS から再現する**（ゴールデンファイルで比較する）。
+- CI で、すべての DTS が標準の `dtc` でもコンパイルできることを確かめる。
+- DTS を書くだけで AtomS3R に対応できることを示す。ここで手書きのコードは書かない（kumiki-dt の価値を確かめるため）。
+- 汎用性の確認: ESP32-S3-DevKitC + ST7789、RP2040 + ST7789（`kumiki-hal-rp`）。
 
-### M4: ESP32 系への展開と機能の拡充
+### M4: Core2 系と機能の拡充
 
-- `chip-esp32`: Core2（v1.0、v1.1、v1.3 のロット違いを `choices` で吸収）、StickC Plus2
-- IMU、RTC、オーディオ（NS4168、AW88298、ES7210）
+- `chip-esp32`: Core2（v1.0 と v1.1 はボードの DTS を分け、v1.3 の IMU の違いは second source で吸収する）
+- RTC、オーディオ（NS4168）、タッチ領域のボタン
 - スプライトの回転・拡縮、パレット、`DirtyRegions`、ダブルバッファ
-- Slint のアダプタ
 - 無印 ESP32 で PSRAM 上のスプライトを転送する経路（パイプライン）の最適化
+- Slint のアダプタ（任意）
 
-### M5: Tab5 と EPD
+### M5: Tab5（rev v1）と M5Paper
 
-- Tab5
-  - rev v3 の silicon には esp-hal の `mipi_dsi` を使う。
-  - rev v1 の silicon には、tab5-os のレジスタ直叩き実装（DSI、GDMA リング、PPA）を移植する。
-  - パネルのロット違い（ILI9881C、ST7123、ST7121）を判別する。
-  - PPA を `FramebufferPanel::accel` として使う。
-- Paper（IT8951）と PaperS3（パラレル EPD をクリーンルームで実装）
+- `kumiki-p4v1-hal`
+  - まず `esp-hal-p4-pre-v3` を rev v1.0 の機体で短期間評価する。使えなければ、または足りなければ、tab5-os の実装（I2C、GPIO、PSRAM、クロック、DSI、GDMA の LLI リング、PPA/DMA2D）を embedded-hal を実装した HAL として切り出す。
+- DSI パネルのロット違い（ILI9881C、ST7123、ST7121）を、DT の second source と DSI の ID 読み出しで判別する。
+- PPA を `FramebufferPanel::accel` として使う。
+- M5Paper（IT8951）。
+- Tab5 の優先度が高ければ、M4 と順序を入れ替えるか並行して進めることもできる（M3 が済んでいれば依存しない）。
 
 ## 主なリスク
 
 | リスク | 対策 |
 |---|---|
-| esp-hal の unstable API が変わる | 依存を gfx-bus-esp と m5-bsp に閉じ込める。版は範囲で指定し、CI の行列テストで確かめる |
+| esp-hal の unstable API が変わる | 依存を kumiki-gfx-bus-esp と kumiki-hal-esp に閉じ込める。版は範囲で指定し、CI の行列テストで確かめる |
 | esp-hal の `write_buffer` の固定費が大きく、M5GFX の 80% に届かない | 小さな転送は FIFO へ直接書く経路を持つ。最終手段として、SPI のレジスタを直接叩く経路を unsafe で用意する（M5GFX と同じ方式） |
-| P4 の rev v1 は esp-hal が対応しない | tab5-os の実装を移植する（M5） |
-| HWD のスキーマが早い段階で固まりすぎる | M3 では v0 として破壊的変更を許す。M4 で機種を増やしてから v1 とする |
-| ドライバの品質のばらつき | 実機で検証したものだけを既定のバインディングにする。provenance で区別する |
+| DTS のパーサと前処理器の作り込みが膨らむ | 対象を DTS v1 と、ボードの記述に必要な前処理だけに絞る。標準の `dtc` との互換は CI で担保する |
+| P4 rev v1 用の HAL の保守 | 対象を Tab5 が使うペリフェラルに限る。tab5-os のエミュレータとテストを流用する |
+| 生成器のスキーマ（バインディングの書式）が早い段階で固まりすぎる | M3 では v0 として破壊的変更を許す。M4 と M5 でボードを増やしてから v1 とする |
 
-## 確認していただきたい事項（未決事項）
+## 確認していただきたい事項
 
-1. **HWD の構文**: TOML（推奨）にするか、DTS の一部にするか（[07](07-design-hwdesc.md) §4）
-2. **プロジェクト名とクレート名**: グラフィックと HWD の層には M5 を冠さない名前を付ける案でよいか（[09](09-crate-layout-license.md)）
-3. **既定は async（embassy）優先**で、blocking も同等に対応する方針でよいか
-4. **手元の Tab5 の P4 の silicon rev**（v1.x か v3.x か）。M5 の進め方が変わる
-5. **ライセンス**: MIT OR Apache-2.0 でよいか
-6. **外部との連携**（Ariel OS sbd、M5GFX board_spec の担当者への相談）を、どの段階で始めるか
+1. **最初に定義を書くボードとその順序**: [08](08-design-bsp.md) §7 の表（CoreS3、AtomS3 → Core2、Tab5 → M5Paper ほか）でよいか。追加や削除はあるか。
+2. **仮の名前 `kumiki`** でよいか（DT の vendor prefix の `kumiki,` も含む）。
+3. **Tab5 の優先度**: M5 のままでよいか、前倒しするか。
