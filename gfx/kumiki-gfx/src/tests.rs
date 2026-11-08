@@ -224,3 +224,104 @@ fn buffered_flush_aligns_dirty_rect() {
     b.flush().unwrap();
     assert_eq!(b.target_mut().panel().windows, n);
 }
+
+/// Scan-out mock: records cache flushes / presents, optional "2D engine".
+struct MockFb {
+    w: u32,
+    h: u32,
+    fb: Vec<u8>,
+    flushed: Vec<Rectangle>,
+    presents: Vec<Option<Rectangle>>,
+    hw: bool,
+    hw_fills: usize,
+    hw_copies: usize,
+}
+
+impl MockFb {
+    fn new(w: u32, h: u32, hw: bool) -> Self {
+        Self { w, h, fb: vec![0; (w * h * 2) as usize], flushed: vec![], presents: vec![], hw, hw_fills: 0, hw_copies: 0 }
+    }
+    fn px(&self, x: u32, y: u32) -> Rgb565 {
+        Rgb565Le::decode(&self.fb[((y * self.w + x) * 2) as usize..])
+    }
+}
+
+impl crate::FramebufferPanel for MockFb {
+    type Format = Rgb565Le;
+    type Error = ();
+    fn size(&self) -> Size {
+        Size::new(self.w, self.h)
+    }
+    fn back_buffer(&mut self) -> &mut [u8] {
+        &mut self.fb
+    }
+    fn flush_cache(&mut self, area: &Rectangle) {
+        self.flushed.push(*area);
+    }
+    fn present(&mut self, changed: Option<&Rectangle>) -> Result<(), ()> {
+        self.presents.push(changed.copied());
+        Ok(())
+    }
+    fn hw_fill(&mut self, area: &Rectangle, pixel: &[u8]) -> bool {
+        if !self.hw {
+            return false;
+        }
+        for p in area.points() {
+            let o = ((p.y as u32 * self.w + p.x as u32) * 2) as usize;
+            self.fb[o..o + 2].copy_from_slice(pixel);
+        }
+        self.hw_fills += 1;
+        true
+    }
+    fn hw_copy(&mut self, _src: &Rectangle, _dst: Point) -> bool {
+        self.hw_copies += 1;
+        false // fall back to the CPU path
+    }
+    fn hw_threshold(&self) -> u32 {
+        16
+    }
+}
+
+#[test]
+fn fb_display_tracks_dirty_and_presents() {
+    let mut d = crate::FbDisplay::new(MockFb::new(20, 10, false));
+    d.flush().unwrap(); // initial: whole frame
+    Pixel(Point::new(3, 4), Rgb565::RED).draw(&mut d).unwrap();
+    Rectangle::new(Point::new(10, 2), Size::new(2, 2)).into_styled(PrimitiveStyle::with_fill(Rgb565::GREEN)).draw(&mut d).unwrap();
+    assert_eq!(d.dirty(), Some(Rectangle::new(Point::new(3, 2), Size::new(9, 3))));
+    d.flush().unwrap();
+    d.flush().unwrap(); // nothing changed
+    let p = d.into_panel();
+    assert_eq!(p.px(3, 4), Rgb565::RED);
+    assert_eq!(p.px(11, 3), Rgb565::GREEN);
+    assert_eq!(p.flushed, vec![Rectangle::new(Point::zero(), Size::new(20, 10)), Rectangle::new(Point::new(3, 2), Size::new(9, 3))]);
+    assert_eq!(p.presents.len(), 3);
+    assert_eq!(p.presents[2], None);
+}
+
+#[test]
+fn fb_display_uses_hw_fill_above_threshold() {
+    let mut d = crate::FbDisplay::new(MockFb::new(20, 10, true));
+    d.fill_rect(&Rectangle::new(Point::new(0, 0), Size::new(3, 3)), Rgb565::BLUE).unwrap(); // 9 px: CPU
+    d.fill_rect(&Rectangle::new(Point::new(5, 5), Size::new(30, 30)), Rgb565::RED).unwrap(); // clipped 15x5: hw
+    let p = d.into_panel();
+    assert_eq!(p.hw_fills, 1);
+    assert_eq!(p.px(2, 2), Rgb565::BLUE);
+    assert_eq!(p.px(19, 9), Rgb565::RED);
+    assert_eq!(p.px(4, 9), Rgb565::BLACK);
+}
+
+#[test]
+fn fb_display_copy_within_overlapping() {
+    let mut d = crate::FbDisplay::new(MockFb::new(8, 8, false));
+    for y in 0..8 {
+        Pixel(Point::new(1, y), Rgb565::new(y as u8, 0, 0)).draw(&mut d).unwrap();
+    }
+    // Scroll down by 2 (overlapping rows): must copy bottom-up.
+    d.copy_within(&Rectangle::new(Point::new(0, 0), Size::new(8, 6)), Point::new(0, 2));
+    let p = d.into_panel();
+    for y in 2..8 {
+        assert_eq!(p.px(1, y), Rgb565::new(y as u8 - 2, 0, 0));
+    }
+    assert_eq!(p.hw_copies, 1);
+}

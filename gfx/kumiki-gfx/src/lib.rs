@@ -9,6 +9,8 @@
 //! * [`Display`] — embedded-graphics [`DrawTarget`](embedded_graphics_core::draw_target::DrawTarget)
 //!   on top of a panel, plus the [`FastDraw`] / [`AsyncFastDraw`] fast paths.
 //! * [`Sprite`] — in-RAM surface in wire order with keyed-transparency push.
+//! * [`FbDisplay`] — drawing on scan-out panels ([`FramebufferPanel`]: DSI,
+//!   DPI / RGB), with optional 2D-engine fills and copies.
 //!
 //! The crate depends only on `embedded-graphics-core`, `embedded-hal` and
 //! `embedded-hal-async`; it uses no executor and no allocator.
@@ -19,6 +21,7 @@ pub mod buffered;
 pub mod bus;
 pub mod display;
 pub mod draw;
+pub mod framebuffer;
 pub mod panel;
 pub mod pixel;
 pub mod sprite;
@@ -28,6 +31,7 @@ pub use buffered::BufferedDisplay;
 pub use viewport::Viewport;
 pub use display::Display;
 pub use draw::{AsyncFastDraw, FastDraw};
+pub use framebuffer::{FbDisplay, FramebufferPanel};
 pub use panel::Rotation;
 pub use pixel::{PixelFormat, Rgb565Be, Rgb565Le, Rgb888Fmt};
 pub use sprite::Sprite;
