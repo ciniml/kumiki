@@ -107,14 +107,12 @@
 	};
 
 	/* Speaker: ES8388 DAC → NS4150B amplifier, enabled by expander #1 line 1
-	 * (SPK_EN). After the display power sequence, which rewrites that
-	 * expander's output register. */
+	 * (SPK_EN; the display power sequence keeps that bit). */
 	speaker: codec@10 {
 		compatible = "everest,es8388";
 		reg = <0x10>;
 		i2s = <&i2s0>;
 		amp-enable-gpios = <&ioexp1 1 GPIO_ACTIVE_HIGH>;
-		kumiki,depends-on = <&display_power>;
 	};
 
 	/* Microphones through the ES7210 ADC. */

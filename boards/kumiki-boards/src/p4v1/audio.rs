@@ -97,9 +97,10 @@ fn write_all<I: I2c>(i2c: &mut I, addr: u8, regs: &[(u8, u8)]) -> Result<(), I::
 
 /// Everest ES8388 DAC (I²S slave) with the speaker amplifier behind it.
 pub struct Es8388<I> {
-    i2c: I,
-    addr: u8,
+    _i2c: I,
     i2s: SharedI2s,
+    /// Software gain, 0–256 (the DAC stays at 0 dB).
+    gain: i32,
 }
 
 impl<I: I2c> Es8388<I> {
@@ -108,7 +109,7 @@ impl<I: I2c> Es8388<I> {
     pub fn new(mut i2c: I, addr: u8, i2s: SharedI2s, amp: &mut impl OutputPin) -> Result<Self, I::Error> {
         write_all(&mut i2c, addr, ES8388_INIT)?;
         let _ = amp.set_high();
-        Ok(Self { i2c, addr, i2s })
+        Ok(Self { _i2c: i2c, i2s, gain: 256 })
     }
 }
 
@@ -118,9 +119,16 @@ impl<I: I2c> Speaker for Es8388<I> {
         rate(self.i2s)
     }
     fn play(&mut self, frames: &[[i16; 2]]) -> Result<(), I::Error> {
-        let mut i = 0;
-        while i < frames.len() {
-            i += self.i2s.borrow_mut().push_frames(&frames[i..]);
+        // Scaled in chunks (same linear volume as the ESP32-S3 family).
+        let mut chunk = [[0i16; 2]; 64];
+        for part in frames.chunks(chunk.len()) {
+            for (o, f) in chunk.iter_mut().zip(part) {
+                *o = [((f[0] as i32 * self.gain) >> 8) as i16, ((f[1] as i32 * self.gain) >> 8) as i16];
+            }
+            let mut i = 0;
+            while i < part.len() {
+                i += self.i2s.borrow_mut().push_frames(&chunk[i..part.len()]);
+            }
         }
         Ok(())
     }
@@ -130,10 +138,9 @@ impl<I: I2c> Speaker for Es8388<I> {
         Ok(())
     }
     fn set_volume(&mut self, level: u8) -> Result<(), I::Error> {
-        // LDACVOL / RDACVOL: 0 = 0 dB, 0xC0 = -96 dB (0.5 dB steps).
-        let att = ((255 - level as u32) * 0xC0 / 255) as u8;
-        self.i2c.write(self.addr, &[26, att])?;
-        self.i2c.write(self.addr, &[27, att])
+        // Linear amplitude like the ESP32-S3 family (level / 255).
+        self.gain = level as i32 + (level as i32 >> 7);
+        Ok(())
     }
 }
 

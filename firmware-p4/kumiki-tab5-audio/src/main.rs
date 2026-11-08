@@ -262,6 +262,7 @@ fn main() -> ! {
     let mut last_tx_descs = 0u64;
     let mut printed_raw = false;
     let mut second = 0u32;
+    let (mut det_i, mut det_q, mut det_n, mut det_n0) = (0f32, 0f32, 0u64, 0u64);
 
     loop {
         let now = time::now_us();
@@ -309,6 +310,14 @@ fn main() -> ! {
                 println!("rx raw: {:?}", &rx[..n.min(4)]);
             }
             lv.add(&rx[..n]);
+            // 1 kHz detector (left channel): correlate with one sine / cosine period.
+            for f in &rx[..n] {
+                let k = (det_n % PERIOD as u64) as usize;
+                let x = f[0] as f32;
+                det_i += x * sine[k] as f32;
+                det_q += x * sine[(k + PERIOD / 4) % PERIOD] as f32;
+                det_n += 1;
+            }
         }
         // Report.
         if now - t_report >= 1_000_000 {
@@ -337,6 +346,11 @@ fn main() -> ! {
                 st.tx_dma_int_raw,
                 st.rx_dma_int_raw,
             );
+            // Amplitude of the 1 kHz component in the mic signal (LSB).
+            let frames = (det_n - det_n0).max(1) as f32;
+            let mag = isqrt(((det_i * det_i + det_q * det_q) / (frames * frames)) as u64) as f32 * 2.0 / AMP;
+            println!("    1 kHz in mic: {mag:.1} LSB");
+            (det_i, det_q, det_n0) = (0.0, 0.0, det_n);
             lv = Levels::default();
             if let Some((frames, us)) = tx_rate_report.take() {
                 println!("tx rate: {frames} frames pushed in {us} us after the ring was full = {} fr/s", frames * 1_000_000 / us);

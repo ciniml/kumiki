@@ -160,6 +160,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "kumiki-tab5-audio-bisect"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+ "embedded-hal-bus",
+ "kumiki-bmi270",
+ "kumiki-boards",
+ "kumiki-class",
+ "kumiki-p4v1-hal",
+ "kumiki-rtc",
+ "static_cell",
+]
+
+[[package]]
 name = "kumiki-tab5-boards"
 version = "0.1.0"
 dependencies = [

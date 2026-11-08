@@ -42,10 +42,14 @@ pub fn tab5_display_power_on<B: I2c>(i2c: &mut B, tp_int: AnyPin) -> Result<(), 
     const EXP1: u8 = 0x43;
     let mut id = [0u8];
     i2c.write_read(EXP1, &[EXP_ID], &mut id).map_err(|_| InitError::NoDevice("pi4ioe5v6408@43"))?;
+    // SPK_EN (bit 1) belongs to the speaker: keep whatever it is.
+    let mut out = [0u8];
+    i2c.write_read(EXP1, &[EXP_OUT], &mut out).map_err(|_| InitError::NoDevice("pi4ioe5v6408@43"))?;
+    let spk = out[0] & 0x02;
     // Both resets low first, so the result is the same whatever state the
     // expander kept across a SoC reset.
     let steps = [
-        (EXP_OUT, 0x44), // EXT5V_EN, CAM_RST high; LCD_RST, TP_RST, SPK_EN low
+        (EXP_OUT, 0x44 | spk), // EXT5V_EN, CAM_RST high; LCD_RST, TP_RST low
         (EXP_DIR, 0x7F), // bits 0-6 outputs, bit7 HP_DET input
         (EXP_OUT_H_IM, 0x00),
         (EXP_PULL_SEL, 0x7F),
@@ -58,7 +62,7 @@ pub fn tab5_display_power_on<B: I2c>(i2c: &mut B, tp_int: AnyPin) -> Result<(), 
     ms(10);
     // LCD_RST released as an input pulled up, TP_RST driven high (as
     // upstream M5GFX and esp-bsp do).
-    let released = i2c.write(EXP1, &[EXP_DIR, 0x6F]).and_then(|_| i2c.write(EXP1, &[EXP_OUT, 0x64]));
+    let released = i2c.write(EXP1, &[EXP_DIR, 0x6F]).and_then(|_| i2c.write(EXP1, &[EXP_OUT, 0x64 | spk]));
     let tp = tp.into_input(Pull::None);
     released.map_err(|_| InitError::NoDevice("pi4ioe5v6408@43"))?;
     ms(100);

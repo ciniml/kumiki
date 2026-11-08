@@ -341,7 +341,7 @@ pub mod tab5 {
     /// Needs PSRAM (a frame buffer lives there).
     pub const NEEDS_PSRAM: bool = true;
     /// Device bring-up order (dependency graph of the device tree).
-    pub const INIT_ORDER: &[&str] = &["i2c1", "ioexp1", "ioexp2", "imu", "rtc", "i2s0", "microphone", "dsi", "display_power", "touch_gt911_14", "touch_gt911_5d", "speaker", "lcd", "lcd_backlight", "buttons"];
+    pub const INIT_ORDER: &[&str] = &["i2c1", "ioexp1", "ioexp2", "imu", "rtc", "i2s0", "speaker", "microphone", "dsi", "display_power", "touch_gt911_14", "touch_gt911_5d", "lcd", "lcd_backlight", "buttons"];
 
     /// Chip GPIOs used by the board (see `take_pins_tab5!`).
     pub struct Pins {
@@ -540,6 +540,11 @@ pub mod tab5 {
             delay.delay_ms(10);
             &*CELL.init(RefCell::new(i2s))
         };
+        // /soc/i2c@500c5000/codec@10 (everest,es8388)
+        let mut speaker = {
+            let mut amp = chips::Pi4ioePin { i2c: RefCellDevice::new(i2c1), addr: ioexp1::ADDR, line: 1 };
+            audio::Es8388::new(RefCellDevice::new(i2c1), speaker::ADDR, i2s0, &mut amp).ok().map(AnySpeaker::Es8388)
+        };
         // /soc/i2c@500c5000/adc@40 (everest,es7210)
         let mut microphone = audio::Es7210::new(RefCellDevice::new(i2c1), microphone::ADDR, i2s0).ok().map(AnyMicrophone::Es7210);
         // /soc/dsi@50105000 (espressif,esp32p4-dsi)
@@ -561,11 +566,6 @@ pub mod tab5 {
                 delay.delay_ms(10);
             }
             found
-        };
-        // /soc/i2c@500c5000/codec@10 (everest,es8388)
-        let mut speaker = {
-            let mut amp = chips::Pi4ioePin { i2c: RefCellDevice::new(i2c1), addr: ioexp1::ADDR, line: 1 };
-            audio::Es8388::new(RefCellDevice::new(i2c1), speaker::ADDR, i2s0, &mut amp).ok().map(AnySpeaker::Es8388)
         };
         // /soc/dsi@50105000/panel@0 (ilitek,ili9881c)
         let mut lcd = {

@@ -1,0 +1,25 @@
+[package]
+name = "kumiki-tab5-audio-bisect"
+description = "Diagnostic: Tab5 speaker beeps between the board bring-up steps (L2 cache, PSRAM, display power, DSI)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "kumiki-tab5-audio-bisect"
+test = false
+bench = false
+
+[dependencies]
+kumiki-p4v1-hal = { path = "../../hal/kumiki-p4v1-hal", features = ["gfx"] }
+kumiki-boards = { path = "../../boards/kumiki-boards", features = ["chip-p4v1"] }
+kumiki-class = { path = "../../dt/kumiki-class" }
+kumiki-rtc = { path = "../../drivers/kumiki-rtc" }
+kumiki-bmi270 = { path = "../../drivers/kumiki-bmi270" }
+embedded-hal = { workspace = true }
+embedded-hal-bus = "0.3"
+static_cell = "2"
