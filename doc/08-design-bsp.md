@@ -117,5 +117,6 @@ pub struct Config {
 | 1 | CoreS3 / SE | esp32s3 / esp-hal | ILI9342C/E（SPI、GPIO35 を共用） | AXP2101 + AW9523、SE にはカメラがない |
 | 1 | AtomS3 / AtomS3R | esp32s3 / esp-hal | GC9107 128×128（y オフセット 32） | PMIC がない、PWM のバックライト、IMU が MPU6886 か BMI270 か |
 | 2 | Tab5（**rev v1**） | esp32p4v1 / **kumiki-p4v1-hal**（tab5-os 由来） | DSI ILI9881C / ST7123 / ST7121 | esp-hal が使えない（[07](07-design-hwdesc.md) §9）、パネルとタッチのロット違い |
+| 1+ | StopWatch（実装済み） | esp32s3（S3R8、Octal PSRAM）/ esp-hal | CO5300 466×466 円形 AMOLED（QSPI、x / 幅は偶数単位） | M5PM1 + M5IOE1 経由の電源とリセット、タッチが CST820 か CST9217 か、PSRAM 上のフレームバッファ |
 | 3 | Cardputer、PaperS3、Dial など ESP32-S3 系 | esp32s3 / esp-hal | ST7789V2 / パラレル EPD / GC9A01 | 必要になったら追加する |
 | – | Core2、M5Paper、StickC Plus2 など無印 ESP32 系 | esp32 | – | **対象外** |

@@ -90,6 +90,23 @@
 | P4 rev v1 用の HAL の保守 | 対象を Tab5 が使うペリフェラルに限る。tab5-os のエミュレータとテストを流用する |
 | 生成器のスキーマ（バインディングの書式）が早い段階で固まりすぎる | M3 では v0 として破壊的変更を許す。M4 と M5 でボードを増やしてから v1 とする |
 
+## 進捗（2026-11-08）
+
+| マイルストーン | 状況 |
+|---|---|
+| M0 | 完了：ワークスペース、M5GFX 比較ベンチ（`bench/m5gfx-idf`）、基準値 |
+| M1 | 完了：全画面転送で M5GFX の 99%（CoreS3 / AtomS3。[bench-results](bench-results/)） |
+| M2 | ほぼ完了：同じバイナリで CoreS3 / AtomS3 / StopWatch を自動判別。async 版（自作 `block_on` と embassy の両方）は AtomS3 で確認。CoreS3 での async 版と BMI270 の実機確認が残り |
+| 追加 | StopWatch（QSPI の CO5300、`BufferedDisplay`、M5PM1 / M5IOE1、CST820 / CST9217、BMI270）を前倒しで対応。表示・ボタン・IMU・タッチを実機で確認 |
+
+### 実機で分かったこと
+
+- **AtomS3 の判別は IMU に頼らない**：手元の個体は IMU の小基板の SDA が本体とつながっておらず（内部プルダウンで Low、プルアップで High = 線が浮いている）、M5Unified でも IMU が見えなかった。M5GFX と同じくパネル ID（GC9107 の RDDID）で判別する。
+- **I2C バスリカバリ**：IMU などは MCU のリセット後も電源が入ったままなので、内部 I2C の初期化前に SCL を最大 9 クロック出してから STOP を出す。
+- **Octal PSRAM 内蔵チップでは GPIO33〜37 に触らない**：eFuse の `PSRAM_CAP` で判定し、該当する判別候補（CoreS3 / AtomS3）を飛ばす（M5GFX の `touches_opi_pins` と同じ考え方）。
+- **StopWatch のタッチ**：個体によって CST820 と CST9217 がある。CST820 の座標は、M5GFX の設定（0〜233 を 2 倍）とは合わなかった。3 点の実測値から、Linux DT の `touchscreen-min-*` / `touchscreen-size-*` と同じ形の補正値を求めた。補正値は DTS に書けるようにする（[07](07-design-hwdesc.md)）。
+- **小さな描画の固定費**：esp-hal の DMA 転送の起動には数 µs かかるため、64 バイト以下は SPI の FIFO から直接送る（`fifo-esp32s3`）。
+
 ## 確認していただきたい事項
 
-現時点ではなし（2026-11-08。実装に着手した）。
+現時点ではなし。
