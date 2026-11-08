@@ -2,8 +2,51 @@
 
 use esp_hal::{
     delay::Delay,
-    gpio::{Flex, InputConfig, Level, OutputConfig, Pin},
+    gpio::{DriveMode, Flex, InputConfig, Level, OutputConfig, Pin, Pull},
 };
+
+/// I²C bus recovery (NXP UM10204 §3.1.16): if a target holds SDA low (e.g.
+/// the MCU was reset in the middle of a read while the device stayed powered),
+/// clock SCL up to 9 times until SDA is released, then issue a STOP.
+///
+/// Returns `true` if SDA is high (bus free) afterwards. Only acts when SDA is
+/// actually stuck, so a healthy bus sees no extra traffic.
+pub fn i2c_bus_recover<'a>(scl: impl Pin + 'a, sda: impl Pin + 'a) -> bool {
+    let delay = Delay::new();
+    let od = OutputConfig::default().with_drive_mode(DriveMode::OpenDrain).with_pull(Pull::Up);
+    let mut scl = Flex::new(scl);
+    let mut sda = Flex::new(sda);
+    for p in [&mut scl, &mut sda] {
+        p.apply_output_config(&od);
+        p.apply_input_config(&InputConfig::default().with_pull(Pull::Up));
+        p.set_high();
+        p.set_input_enable(true);
+        p.set_output_enable(true);
+    }
+    delay.delay_micros(10);
+    if sda.is_high() {
+        return true;
+    }
+    for _ in 0..9 {
+        scl.set_low();
+        delay.delay_micros(5);
+        scl.set_high();
+        delay.delay_micros(5);
+        if sda.is_high() {
+            break;
+        }
+    }
+    // STOP: SDA low → high while SCL is high.
+    scl.set_low();
+    delay.delay_micros(5);
+    sda.set_low();
+    delay.delay_micros(5);
+    scl.set_high();
+    delay.delay_micros(5);
+    sda.set_high();
+    delay.delay_micros(5);
+    sda.is_high()
+}
 
 /// Read the 3 RDDID (0x04) bytes of a MIPI-DCS panel on a 3-wire SPI bus
 /// (bidirectional SDA), bit-banged on GPIOs, after a hardware reset.

@@ -10,7 +10,7 @@
 
 mod any;
 pub mod chips;
-mod probe;
+pub mod probe;
 
 /// RDDID bytes of the GC9107 (M5GFX: `(id & 0xFFFFFF) == 0x079100`).
 const GC9107_ID: [u8; 3] = [0x00, 0x91, 0x07];
@@ -144,6 +144,7 @@ fn detect(p: &mut Peripherals) -> Result<BoardId, InitError> {
     let cfg = I2cConfig::default().with_frequency(Rate::from_khz(100));
     let (mut axp, mut aw, mut id) = (None, None, [0u8; 3]);
     if CORES3 {
+        probe::i2c_bus_recover(p.GPIO11.reborrow(), p.GPIO12.reborrow());
         let mut i2c = I2c::new(p.I2C0.reborrow(), cfg)
             .map_err(|_| InitError::Config)?
             .with_sda(p.GPIO12.reborrow())
@@ -235,7 +236,7 @@ fn init_cores3(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devic
 }
 
 #[inline(never)]
-fn init_atoms3(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devices, InitError> {
+fn init_atoms3(mut p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devices, InitError> {
     let mut delay = Delay::new();
     let mut rst = Output::new(p.GPIO34, Level::Low, OutputConfig::default());
     delay.delay_millis(10);
@@ -261,6 +262,9 @@ fn init_atoms3(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devic
 
     let backlight = AnyBacklight::Gpio(Output::new(p.GPIO16, Level::High, OutputConfig::default()));
 
+    // The IMU stays powered across MCU resets and could hold SDA low after an
+    // interrupted transfer; recover the bus before use.
+    probe::i2c_bus_recover(p.GPIO39.reborrow(), p.GPIO38.reborrow());
     let i2c = I2c::new(p.I2C1, I2cConfig::default().with_frequency(Rate::from_khz(400)))
         .map_err(|_| InitError::Config)?
         .with_sda(p.GPIO38)
