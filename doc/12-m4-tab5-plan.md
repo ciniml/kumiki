@@ -1,0 +1,51 @@
+# 12. M4: Tab5（ESP32-P4 rev v1）の計画
+
+調査日: 2026-11-08。手元の Tab5 は ESP32-P4 **rev v1.0**、フラッシュ 16MB（`espflash board-info`、tab5-os `doc/09-bringup-m1.md`）。
+
+## 前提
+
+- **esp-hal は使えない。** esp-hal は rev v3.0 以降だけを対象にしている。ロードマップ #3962 には「v1.3 chip support is not planned and contributions to add it will not be accepted」と書かれている。esp-hal でビルドしたアプリが v1.3 の Tab5 でブートローダから飛んだ直後に止まる報告もある（#6179）。出典は tab5-os `doc/03-rust-ecosystem.md` §1。
+- **tab5-os に実機で動く実装がある**（同じ作者、MIT OR Apache-2.0）。
+  - ESP-IDF の `hw_ver1` レジスタ定義を一次情報にして、必要なブロックだけを手書きしている。
+  - IDF の v1 用 2nd stage ブートローダから起動し、0x10000 から XIP で実行する。
+  - DSI は GDMA の LLI リングで 64fps を出す。
+  - PPA で全画面の塗りつぶしが 5.1ms。
+  - PSRAM（HEX、200MHz）の初期化も自前。
+  - 参照するファイル: `kernel/src/platform/esp32p4v1/{clock,psram,i2c,display,ppa,tab5}.rs`、`kernel/kernel-common.ld`、`boot/`
+- kumiki のボード定義（DTS → 生成）は HAL アダプタを挟む設計なので（[07](07-design-hwdesc.md) §9）、P4 v1 用の自前 HAL を差し込める。**Tab5 は「esp-hal 以外の HAL でも kumiki-dt が成り立つか」を確かめる最初の実例になる。**
+
+## 構成
+
+```
+hal/kumiki-p4v1-hal      ESP32-P4 rev v1 用の最小 HAL（no_std）
+  rt        エントリ、リンカスクリプト（IDF ブートローダ用の 2 セグメント配置）、トラップの最小処理
+  clock     CPU / PLL / ペリフェラルのクロック
+  psram     HEX PSRAM の初期化とキャッシュ設定（L2 ライン 128B、自動ロード）
+  gpio      IO_MUX / GPIO マトリクス、embedded-hal の OutputPin / InputPin
+  i2c       I2C マスタ（embedded-hal の I2c、NACK のあとにバスクリアをしない）
+  usb_jtag  USB Serial/JTAG への出力（ログ）
+  delay     SYSTIMER による DelayNs
+  dsi       MIPI-DSI ホスト + DPI ブリッジ + D-PHY PLL + LDO VO3
+  gdma      DW-GDMA の LLI リング（フレームバッファの走査、16 本のリング）
+  ppa       PPA の塗りつぶしと DMA2D のコピー
+  cache     L1 / L2 の書き戻し（ROM 関数）
+gfx/kumiki-gfx           FramebufferPanel（新設）: back_buffer / flush_cache / present / accel
+gfx/kumiki-gfx-panels    ILI9881C / ST7123（DSI の初期化表）
+boards/dts/m5stack/tab5.dts, boards/dts/soc/espressif/esp32p4v1.dtsi
+dt/kumiki-dtgen          p4v1 バックエンド（HAL アダプタ違い）
+```
+
+## 段階
+
+| 段階 | 内容 | 完了の条件 |
+|---|---|---|
+| M4a | `kumiki-p4v1-hal` の骨格: rt、USB Serial/JTAG、SYSTIMER、GPIO、I2C | Tab5 で起動ログが出て、内部 I2C をスキャンできる（PI4IOE5V6408 0x43/0x44、GT911 0x14 など） |
+| M4b | PSRAM + DSI + GDMA リング + ILI9881C。`FramebufferPanel` を kumiki-gfx に追加 | Tab5 の画面に kumiki-gfx で描いた画像が出る。present が垂直同期に同期する（約 60fps） |
+| M4c | PPA を `FramebufferPanel::accel` として使い、塗りつぶしとコピーを `FastDraw` から使えるようにする | 全画面の塗りつぶしが 6ms 以下（tab5-os の 5.1ms が目安） |
+| M4d | Tab5 のボード定義: PI4IOE5V6408、GT911 / ST7123 のタッチ、BMI270、パネルのロット違いの判別。DTS と p4v1 用の生成バックエンド | 同じアプリ（kumiki-demo 相当）が Tab5 で動き、ボード定義が DTS から生成される |
+
+## 書き込みについて
+
+- Tab5 に書き込むと、いま入っている tab5-os のカーネル（0x10000）が上書きされる。tab5-os の `make flash-p4` で戻せる。
+- ブートローダ（0x2000）とパーティションテーブル（0x8000）は、tab5-os が IDF でビルドした v1 用のものをそのまま使う。
+- 注意: 電源を落とす操作（PI4IOE5V6408 #2 の bit4）は、tab5-os の教訓どおり保護する（[02](02-local-assets.md)）。
