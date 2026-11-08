@@ -155,8 +155,6 @@ impl Rtc for AnyRtc {
     }
 }
 
-// No speaker is described for this family yet: the enum is empty.
-#[allow(unused_variables)]
 impl Speaker for AnySpeaker {
     type Error = AnyError;
     fn sample_rate(&self) -> u32 {
@@ -173,7 +171,6 @@ impl Speaker for AnySpeaker {
     }
 }
 
-#[allow(unused_variables)]
 impl Microphone for AnyMicrophone {
     type Error = AnyError;
     fn sample_rate(&self) -> u32 {

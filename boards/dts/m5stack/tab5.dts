@@ -22,6 +22,8 @@
 		kumiki,touch = &touch_gt911_14, &touch_gt911_5d;
 		kumiki,imu = &imu;
 		kumiki,rtc = &rtc;
+		kumiki,speaker = &speaker;
+		kumiki,microphone = &microphone;
 	};
 
 	lcd_backlight: backlight {
@@ -103,6 +105,35 @@
 		compatible = "epson,rx8130";
 		reg = <0x32>;
 	};
+
+	/* Speaker: ES8388 DAC → NS4150B amplifier, enabled by expander #1 line 1
+	 * (SPK_EN). After the display power sequence, which rewrites that
+	 * expander's output register. */
+	speaker: codec@10 {
+		compatible = "everest,es8388";
+		reg = <0x10>;
+		i2s = <&i2s0>;
+		amp-enable-gpios = <&ioexp1 1 GPIO_ACTIVE_HIGH>;
+		kumiki,depends-on = <&display_power>;
+	};
+
+	/* Microphones through the ES7210 ADC. */
+	microphone: adc@40 {
+		compatible = "everest,es7210";
+		reg = <0x40>;
+		i2s = <&i2s0>;
+	};
+};
+
+/* DAC out and ADC in share I2S0 and its clocks (full duplex). */
+&i2s0 {
+	status = "okay";
+	mclk-gpios = <&gpio 30 GPIO_ACTIVE_HIGH>;
+	bclk-gpios = <&gpio 27 GPIO_ACTIVE_HIGH>;
+	ws-gpios = <&gpio 29 GPIO_ACTIVE_HIGH>;
+	dout-gpios = <&gpio 26 GPIO_ACTIVE_HIGH>;
+	din-gpios = <&gpio 28 GPIO_ACTIVE_HIGH>;
+	kumiki,sample-rate = <48000>;
 };
 
 &dsi {

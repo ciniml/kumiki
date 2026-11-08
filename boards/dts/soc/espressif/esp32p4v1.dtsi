@@ -45,6 +45,16 @@
 			status = "disabled";
 		};
 
+		/* I2S0 (AHB-GDMA channel 0 in kumiki-p4v1-hal). */
+		i2s0: i2s@500c6000 {
+			compatible = "espressif,esp32p4-i2s";
+			reg = <0x500c6000 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			kumiki,instance = "i2s0";
+			status = "disabled";
+		};
+
 		/* MIPI-DSI host + DPI bridge; the frame DMA reads a PSRAM frame buffer. */
 		dsi: dsi@50105000 {
 			compatible = "espressif,esp32p4-dsi";

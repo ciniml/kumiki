@@ -150,13 +150,13 @@ const PRELUDE_P4V1: &str = r#"mod prelude {
         fb::DsiPanel,
         gpio::{Input, Output, Pull},
         i2c::I2c,
+        i2s::{Config as I2sConfig, I2s, Pins as I2sPins},
         time::Delay,
     };
     pub use static_cell::StaticCell;
     pub use super::super::{
-        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs, Devices,
-        I2cBus, InitError,
-        Spare,
+        audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs,
+        Devices, I2cBus, InitError, Spare,
     };
 }
 "#;
@@ -295,6 +295,28 @@ impl Ctx<'_> {
             "dcs_config" => {
                 let l = &my_label;
                 format!("bind::dcs_config({l}::WIDTH, {l}::HEIGHT, {l}::OFFSET, {l}::INVERT, {l}::RGB_ORDER)")
+            }
+            "outpin" => {
+                // An `OutputPin` for the line of `PROP`: a chip GPIO (starting
+                // low) or a line of a gpio-controller node (its `gpio-pin`).
+                let p = me.prop(arg).ok_or_else(|| self.err(format!("missing {arg}")))?;
+                match gpios(tree, p)?.first() {
+                    Some(Gpio::Chip { .. }) => {
+                        let pin = self.pin(arg)?;
+                        match self.backend {
+                            Backend::Esp32s3 => format!("Output::new({pin}, Level::Low, OutputConfig::default())"),
+                            Backend::P4v1 => format!("Output::new({pin}, false)"),
+                        }
+                    }
+                    Some(Gpio::Expander { controller, pin, .. }) => {
+                        let cpath = tree.resolve(controller).ok_or_else(|| self.err("unresolved gpio controller"))?;
+                        let cctx = Ctx { board: self.board, bindings: self.bindings, path: cpath.clone(), backend: self.backend };
+                        let cb = self.bindings.for_node(self.node(&cpath)).ok_or_else(|| self.err("controller has no binding"))?;
+                        let tpl = cb.kumiki.gpio_pin.as_deref().ok_or_else(|| self.err("controller binding has no gpio-pin"))?;
+                        cctx.expand(&tpl.replace("${line}", &pin.to_string()))?
+                    }
+                    None => return Err(self.err(format!("{arg} is empty"))),
+                }
             }
             "reset" => match me.prop("reset-gpios") {
                 None => String::new(),

@@ -97,6 +97,38 @@
     sda-gpios: { type: gpios }
     scl-gpios: { type: gpios }
 
+- compatible: "espressif,esp32p4-i2s"
+  kumiki:
+    controller: i2s
+    # Full duplex, 16-bit stereo Philips I2S, master, MCLK = 256 fs; started here
+    # (the codecs need MCLK before their registers are written) and shared by the
+    # devices on it as `audio::SharedI2s` (`${var:i2s}`).
+    init: |
+      {
+          static CELL: StaticCell<RefCell<I2s>> = StaticCell::new();
+          let pins = I2sPins {
+              mclk: ${pin:mclk-gpios}.degrade(),
+              bclk: ${pin:bclk-gpios}.degrade(),
+              ws: ${pin:ws-gpios}.degrade(),
+              dout: ${pin:dout-gpios}.degrade(),
+              din: ${pin:din-gpios}.degrade(),
+          };
+          let cfg = I2sConfig { sample_rate: ${const:SAMPLE_RATE}.unwrap_or(48_000) };
+          let mut i2s = I2s::new(${instance}, pins, cfg).map_err(|_| InitError::Config)?;
+          i2s.start();
+          delay.delay_ms(10);
+          &*CELL.init(RefCell::new(i2s))
+      }
+  properties:
+    reg: { type: array }
+    kumiki,instance: { type: string, required: true }
+    mclk-gpios: { type: gpios, required: true }
+    bclk-gpios: { type: gpios, required: true }
+    ws-gpios: { type: gpios, required: true }
+    dout-gpios: { type: gpios, required: true }
+    din-gpios: { type: gpios, required: true }
+    kumiki,sample-rate: { type: int, description: "sample rate in Hz (default 48000)" }
+
 - compatible: "espressif,esp32p4-dsi"
   kumiki:
     controller: dsi

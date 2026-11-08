@@ -54,13 +54,13 @@ mod prelude {
         fb::DsiPanel,
         gpio::{Input, Output, Pull},
         i2c::I2c,
+        i2s::{Config as I2sConfig, I2s, Pins as I2sPins},
         time::Delay,
     };
     pub use static_cell::StaticCell;
     pub use super::super::{
-        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs, Devices,
-        I2cBus, InitError,
-        Spare,
+        audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs,
+        Devices, I2cBus, InitError, Spare,
     };
 }
 
@@ -217,12 +217,16 @@ macro_rules! any_rtc {
 
 /// Audio output of any board in this family (generated from the bindings).
 pub enum AnySpeaker {
+    /// `everest,es8388` (M5Stack Tab5).
+    Es8388(audio::Es8388<SharedI2c>),
 }
 
 impl AnySpeaker {
     /// Device part number (from the compatible).
     pub fn name(&self) -> &'static str {
-        match *self {}
+        match self {
+            AnySpeaker::Es8388(_) => "ES8388",
+        }
     }
 }
 
@@ -230,19 +234,24 @@ impl AnySpeaker {
 #[allow(unused_macros)]
 macro_rules! any_speaker {
     ($s:expr, $v:ident => $e:expr) => {
-        match *$s {
+        match $s {
+            $crate::p4v1::generated::AnySpeaker::Es8388($v) => $e,
         }
     };
 }
 
 /// Audio input of any board in this family (generated from the bindings).
 pub enum AnyMicrophone {
+    /// `everest,es7210` (M5Stack Tab5).
+    Es7210(audio::Es7210<SharedI2c>),
 }
 
 impl AnyMicrophone {
     /// Device part number (from the compatible).
     pub fn name(&self) -> &'static str {
-        match *self {}
+        match self {
+            AnyMicrophone::Es7210(_) => "ES7210",
+        }
     }
 }
 
@@ -250,7 +259,8 @@ impl AnyMicrophone {
 #[allow(unused_macros)]
 macro_rules! any_microphone {
     ($s:expr, $v:ident => $e:expr) => {
-        match *$s {
+        match $s {
+            $crate::p4v1::generated::AnyMicrophone::Es7210($v) => $e,
         }
     };
 }
@@ -306,6 +316,11 @@ macro_rules! take_pins_tab5 {
         $crate::p4v1::generated::tab5::Pins {
             i2c1_sda: $p.pins.gpio31,
             i2c1_scl: $p.pins.gpio32,
+            i2s0_mclk: $p.pins.gpio30,
+            i2s0_bclk: $p.pins.gpio27,
+            i2s0_ws: $p.pins.gpio29,
+            i2s0_dout: $p.pins.gpio26,
+            i2s0_din: $p.pins.gpio28,
             lcd_backlight: $p.pins.gpio22,
             display_power_touch_int: $p.pins.gpio23,
         }
@@ -326,12 +341,17 @@ pub mod tab5 {
     /// Needs PSRAM (a frame buffer lives there).
     pub const NEEDS_PSRAM: bool = true;
     /// Device bring-up order (dependency graph of the device tree).
-    pub const INIT_ORDER: &[&str] = &["i2c1", "ioexp1", "ioexp2", "imu", "rtc", "dsi", "display_power", "touch_gt911_14", "touch_gt911_5d", "lcd", "lcd_backlight", "buttons"];
+    pub const INIT_ORDER: &[&str] = &["i2c1", "ioexp1", "ioexp2", "imu", "rtc", "i2s0", "microphone", "dsi", "display_power", "touch_gt911_14", "touch_gt911_5d", "speaker", "lcd", "lcd_backlight", "buttons"];
 
     /// Chip GPIOs used by the board (see `take_pins_tab5!`).
     pub struct Pins {
         pub i2c1_sda: kumiki_p4v1_hal::gpio::Pin<31>,
         pub i2c1_scl: kumiki_p4v1_hal::gpio::Pin<32>,
+        pub i2s0_mclk: kumiki_p4v1_hal::gpio::Pin<30>,
+        pub i2s0_bclk: kumiki_p4v1_hal::gpio::Pin<27>,
+        pub i2s0_ws: kumiki_p4v1_hal::gpio::Pin<29>,
+        pub i2s0_dout: kumiki_p4v1_hal::gpio::Pin<26>,
+        pub i2s0_din: kumiki_p4v1_hal::gpio::Pin<28>,
         pub lcd_backlight: kumiki_p4v1_hal::gpio::Pin<22>,
         pub display_power_touch_int: kumiki_p4v1_hal::gpio::Pin<23>,
     }
@@ -401,6 +421,38 @@ pub mod tab5 {
         use super::super::Gpio;
         pub const COMPATIBLE: &str = "epson,rx8130";
         pub const ADDR: u8 = 0x32;
+    }
+    /// `/soc/i2c@500c5000/codec@10` (everest,es8388).
+    pub mod speaker {
+        #[allow(unused_imports)]
+        use super::super::Gpio;
+        pub const COMPATIBLE: &str = "everest,es8388";
+        /// speaker amplifier enable
+        pub const AMP_ENABLE_GPIOS: &[Gpio] = &[Gpio::Expander { controller: "ioexp1", pin: 1, active_low: false }];
+        pub const I2S: &str = "i2s0";
+        pub const ADDR: u8 = 0x10;
+    }
+    /// `/soc/i2c@500c5000/adc@40` (everest,es7210).
+    pub mod microphone {
+        #[allow(unused_imports)]
+        use super::super::Gpio;
+        pub const COMPATIBLE: &str = "everest,es7210";
+        pub const I2S: &str = "i2s0";
+        pub const ADDR: u8 = 0x40;
+    }
+    /// `/soc/i2s@500c6000` (espressif,esp32p4-i2s).
+    pub mod i2s0 {
+        #[allow(unused_imports)]
+        use super::super::Gpio;
+        pub const COMPATIBLE: &str = "espressif,esp32p4-i2s";
+        pub const BCLK_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 27, active_low: false }];
+        pub const DIN_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 28, active_low: false }];
+        pub const DOUT_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 26, active_low: false }];
+        pub const INSTANCE: &str = "i2s0";
+        /// sample rate in Hz (default 48000)
+        pub const SAMPLE_RATE: Option<u32> = Some(48000);
+        pub const MCLK_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 30, active_low: false }];
+        pub const WS_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 29, active_low: false }];
     }
     /// `/soc/dsi@50105000` (espressif,esp32p4-dsi).
     pub mod dsi {
@@ -472,6 +524,24 @@ pub mod tab5 {
             let mut r = kumiki_rtc::Rx8130::new(RefCellDevice::new(i2c1), rtc::ADDR);
             r.init().ok().map(|_| AnyRtc::Rx8130(r))
         };
+        // /soc/i2s@500c6000 (espressif,esp32p4-i2s)
+        let mut i2s0 = {
+            static CELL: StaticCell<RefCell<I2s>> = StaticCell::new();
+            let pins = I2sPins {
+                mclk: pins.i2s0_mclk.degrade(),
+                bclk: pins.i2s0_bclk.degrade(),
+                ws: pins.i2s0_ws.degrade(),
+                dout: pins.i2s0_dout.degrade(),
+                din: pins.i2s0_din.degrade(),
+            };
+            let cfg = I2sConfig { sample_rate: i2s0::SAMPLE_RATE.unwrap_or(48_000) };
+            let mut i2s = I2s::new(p.i2s0, pins, cfg).map_err(|_| InitError::Config)?;
+            i2s.start();
+            delay.delay_ms(10);
+            &*CELL.init(RefCell::new(i2s))
+        };
+        // /soc/i2c@500c5000/adc@40 (everest,es7210)
+        let mut microphone = audio::Es7210::new(RefCellDevice::new(i2c1), microphone::ADDR, i2s0).ok().map(AnyMicrophone::Es7210);
         // /soc/dsi@50105000 (espressif,esp32p4-dsi)
         let mut dsi = ();
         // /display-power-sequence (m5stack,tab5-display-power-sequence)
@@ -492,6 +562,11 @@ pub mod tab5 {
             }
             found
         };
+        // /soc/i2c@500c5000/codec@10 (everest,es8388)
+        let mut speaker = {
+            let mut amp = chips::Pi4ioePin { i2c: RefCellDevice::new(i2c1), addr: ioexp1::ADDR, line: 1 };
+            audio::Es8388::new(RefCellDevice::new(i2c1), speaker::ADDR, i2s0, &mut amp).ok().map(AnySpeaker::Es8388)
+        };
         // /soc/dsi@50105000/panel@0 (ilitek,ili9881c)
         let mut lcd = {
             let fbs = bind::dsi_frame_buffers(psram).ok_or(InitError::Config)?;
@@ -510,8 +585,8 @@ pub mod tab5 {
             imu: imu,
             power: None,
             rtc: rtc,
-            speaker: None,
-            microphone: None,
+            speaker: speaker,
+            microphone: microphone,
             buttons: buttons,
             spare,
         })

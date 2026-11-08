@@ -46,8 +46,13 @@
     "#gpio-cells": { type: int, required: true }
 
 - compatible: "diodes,pi4ioe5v6408"
-  # Lines are set by board glue (Tab5: m5stack,tab5-display-power-sequence).
-  kumiki: { bus: i2c, class: gpio-expander, init: "()" }
+  # Reset lines are set by board glue (Tab5: m5stack,tab5-display-power-sequence);
+  # lines a device owns (`*-gpios = <&exp N …>`) are driven read-modify-write.
+  kumiki:
+    bus: i2c
+    class: gpio-expander
+    init: "()"
+    gpio-pin: "chips::Pi4ioePin { i2c: RefCellDevice::new(${bus}), addr: ${const:ADDR}, line: ${line} }"
   properties:
     reg: { type: int, required: true }
     gpio-controller: { type: boolean, required: true }
@@ -264,11 +269,32 @@
           let input = audio::I2sIn::new(rx, buf, ${var:i2s}.rate).ok_or(InitError::Config)?;
           audio::Es7210::new(RefCellDevice::new(${bus}), ${const:ADDR}, input).ok().map(AnyMicrophone::${variant})
       }
+    init-for:
+      # The controller is shared (`audio::SharedI2s`) and already running.
+      p4v1: "audio::Es7210::new(RefCellDevice::new(${bus}), ${const:ADDR}, ${var:i2s}).ok().map(AnyMicrophone::${variant})"
     variant: Es7210
     type: "audio::Es7210<SharedI2c>"
   properties:
     reg: { type: int, required: true }
     i2s: { type: phandle, required: true }
+
+- compatible: "everest,es8388"
+  kumiki:
+    bus: i2c
+    class: speaker
+    init-for:
+      # DAC on the shared, running I2S controller; then the amplifier on.
+      p4v1: |
+        {
+            let mut amp = ${outpin:amp-enable-gpios};
+            audio::Es8388::new(RefCellDevice::new(${bus}), ${const:ADDR}, ${var:i2s}, &mut amp).ok().map(AnySpeaker::${variant})
+        }
+    variant: Es8388
+    type: "audio::Es8388<SharedI2c>"
+  properties:
+    reg: { type: int, required: true }
+    i2s: { type: phandle, required: true }
+    amp-enable-gpios: { type: gpios, required: true, description: "speaker amplifier enable" }
 
 # ---- real-time clocks --------------------------------------------------------------
 - compatible: "belling,bm8563"

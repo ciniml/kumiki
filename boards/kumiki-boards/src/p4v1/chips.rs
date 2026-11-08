@@ -85,6 +85,66 @@ pub fn tab5_display_power_on<B: I2c>(i2c: &mut B, tp_int: AnyPin) -> Result<(), 
     Err(InitError::NoDevice("touch controller"))
 }
 
+/// One output line of a PI4IOE5V6408 expander, driven read-modify-write
+/// (only its own bit of DIR / OUT_H_IM / OUT changes). Used for lines
+/// that devices own, such as the Tab5's speaker-amp enable (#1, line 1).
+pub struct Pi4ioePin<I> {
+    /// The (shared) I²C device.
+    pub i2c: I,
+    /// Expander address.
+    pub addr: u8,
+    /// Line 0–7.
+    pub line: u8,
+}
+
+impl<I: I2c> Pi4ioePin<I> {
+    fn update(&mut self, reg: u8, set: bool) -> Result<(), I::Error> {
+        let mut v = [0u8];
+        self.i2c.write_read(self.addr, &[reg], &mut v)?;
+        let bit = 1 << self.line;
+        let new = if set { v[0] | bit } else { v[0] & !bit };
+        if new != v[0] {
+            self.i2c.write(self.addr, &[reg, new])?;
+        }
+        Ok(())
+    }
+
+    fn drive(&mut self, high: bool) -> Result<(), I::Error> {
+        // Guard: on the Tab5, expander #2's line 4 cuts the board power; a
+        // device tree pointing a consumer at it would power the board off.
+        if self.addr == 0x44 && self.line == 4 {
+            return Ok(());
+        }
+        // An output (DIR), not high-impedance (OUT_H_IM), at the level.
+        self.update(EXP_DIR, true)?;
+        self.update(EXP_OUT_H_IM, false)?;
+        self.update(EXP_OUT, high)
+    }
+}
+
+/// Error of [`Pi4ioePin`] (the I²C error).
+#[derive(Debug)]
+pub struct ExpanderPinError<E>(pub E);
+
+impl<E: core::fmt::Debug> embedded_hal::digital::Error for ExpanderPinError<E> {
+    fn kind(&self) -> embedded_hal::digital::ErrorKind {
+        embedded_hal::digital::ErrorKind::Other
+    }
+}
+
+impl<I: I2c> embedded_hal::digital::ErrorType for Pi4ioePin<I> {
+    type Error = ExpanderPinError<I::Error>;
+}
+
+impl<I: I2c> embedded_hal::digital::OutputPin for Pi4ioePin<I> {
+    fn set_low(&mut self) -> Result<(), Self::Error> {
+        self.drive(false).map_err(ExpanderPinError)
+    }
+    fn set_high(&mut self) -> Result<(), Self::Error> {
+        self.drive(true).map_err(ExpanderPinError)
+    }
+}
+
 const GT_STATUS: u16 = 0x814E;
 const GT_POINTS: u16 = 0x814F;
 const GT_POINT_SIZE: usize = 8;

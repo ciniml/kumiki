@@ -19,6 +19,7 @@ macro_rules! take_spare {
 #[macro_use]
 pub mod generated;
 mod any;
+pub mod audio;
 pub mod bind;
 pub mod chips;
 pub mod probe;
@@ -97,9 +98,9 @@ pub struct Devices {
     pub power: Option<AnyPower>,
     /// Real-time clock, if any (DT `chosen { kumiki,rtc }`).
     pub rtc: Option<AnyRtc>,
-    /// Audio output, if any (none described for this family yet).
+    /// Audio output, if any (DT `chosen { kumiki,speaker }`).
     pub speaker: Option<AnySpeaker>,
-    /// Audio input, if any (none described for this family yet).
+    /// Audio input, if any (DT `chosen { kumiki,microphone }`).
     pub microphone: Option<AnyMicrophone>,
     /// Button raw-state source.
     pub buttons: ButtonInputs,
