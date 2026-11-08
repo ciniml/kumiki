@@ -141,10 +141,35 @@ pub fn stopwatch_power_on<I: I2c>(i2c: &mut I, delay: &mut impl embedded_hal::de
 pub struct Cst820<I> {
     /// The (shared) I²C device.
     pub i2c: I,
-    /// Raw-to-pixel scale (StopWatch reports 0..233 for a 466 px panel).
-    pub scale: i16,
+    /// Raw → pixel mapping.
+    pub map: TouchMap,
     /// Lazily applied configuration done (see `ensure_init`).
     pub inited: bool,
+}
+
+/// Linear raw → pixel mapping per axis, in the spirit of the Linux / DT
+/// touchscreen properties: raw `min..min+size` spans pixels `0..pixels`.
+#[derive(Clone, Copy, Debug)]
+pub struct TouchMap {
+    /// `touchscreen-min-x` / `-y`: raw value at pixel 0.
+    pub min: (i32, i32),
+    /// `touchscreen-size-x` / `-y`: raw span of the whole panel.
+    pub size: (i32, i32),
+    /// Panel size in pixels.
+    pub pixels: (i32, i32),
+}
+
+impl TouchMap {
+    /// Identity mapping for a `w × h` panel.
+    pub const fn identity(w: i32, h: i32) -> Self {
+        Self { min: (0, 0), size: (w, h), pixels: (w, h) }
+    }
+    /// Map a raw point to pixels (clamped to the panel).
+    pub fn apply(&self, x: i32, y: i32) -> (i16, i16) {
+        let px = ((x - self.min.0) * self.pixels.0 / self.size.0).clamp(0, self.pixels.0 - 1);
+        let py = ((y - self.min.1) * self.pixels.1 / self.size.1).clamp(0, self.pixels.1 - 1);
+        (px as i16, py as i16)
+    }
 }
 
 impl<I: I2c> Cst820<I> {
@@ -175,9 +200,10 @@ impl<I: I2c> kumiki_class::Touch for Cst820<I> {
         if b[0] & 0x0F == 0 || out.is_empty() {
             return Ok(0);
         }
-        let x = (((b[1] & 0x0F) as i16) << 8) | b[2] as i16;
-        let y = (((b[3] & 0x0F) as i16) << 8) | b[4] as i16;
-        out[0] = TouchPoint { x: x * self.scale, y: y * self.scale, id: 0 };
+        let x = (((b[1] & 0x0F) as i32) << 8) | b[2] as i32;
+        let y = (((b[3] & 0x0F) as i32) << 8) | b[4] as i32;
+        let (x, y) = self.map.apply(x, y);
+        out[0] = TouchPoint { x, y, id: 0 };
         Ok(1)
     }
 }
