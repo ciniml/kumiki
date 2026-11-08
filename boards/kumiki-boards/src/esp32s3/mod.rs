@@ -335,7 +335,21 @@ fn init_stopwatch(mut p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Resul
     embedded_graphics_core::draw_target::DrawTarget::clear(&mut display, embedded_graphics_core::pixelcolor::Rgb565::new(0, 0, 0)).ok();
     display.flush().map_err(|_| InitError::Display)?;
 
-    let touch = Some(AnyTouch::Cst820(chips::Cst820 { i2c: RefCellDevice::new(bus), scale: 2 }));
+    // Units ship with CST820 (0x15) or CST9217 (0x5A); the latter needs up to
+    // ~50 ms after reset before it answers (M5GFX `stopwatch_touch_is_cst9217`).
+    let mut touch = None;
+    for _ in 0..8 {
+        let mut dev = RefCellDevice::new(bus);
+        if embedded_hal::i2c::I2c::write(&mut dev, chips::CST820_ADDR, &[0x00]).is_ok() {
+            touch = Some(AnyTouch::Cst820(chips::Cst820 { i2c: RefCellDevice::new(bus), scale: 2 }));
+            break;
+        }
+        if embedded_hal::i2c::I2c::write(&mut dev, chips::CST9217_ADDR, &[0xD0, 0x00]).is_ok() {
+            touch = Some(AnyTouch::Cst9217(chips::Cst9217 { i2c: RefCellDevice::new(bus) }));
+            break;
+        }
+        delay.delay_millis(10);
+    }
     let mut bmi = kumiki_bmi270::Bmi270::new(RefCellDevice::new(bus), kumiki_bmi270::DEFAULT_ADDRESS);
     let imu = bmi.init(&mut delay).ok().map(|_| AnyImu::Bmi270(bmi));
 

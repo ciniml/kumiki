@@ -20,7 +20,7 @@ use esp_backtrace as _;
 use esp_hal::{clock::CpuClock, delay::Delay, main, time::Instant};
 use esp_println::println;
 use kumiki_boards::{AnyDisplay, Devices};
-use kumiki_class::{Backlight, ButtonKind, Buttons, Imu, Power};
+use kumiki_class::{Backlight, ButtonKind, Buttons, Imu, Power, Touch, TouchPoint};
 use kumiki_gfx::{FastDraw, Rgb565Be, Sprite};
 
 esp_bootloader_esp_idf::esp_app_desc!();
@@ -90,7 +90,7 @@ fn main() -> ! {
     println!(
         "kumiki-demo: detected {} (touch: {}, imu: {}, power: {})",
         board.name(),
-        touch.is_some(),
+        touch.as_ref().map(|t| t.name()).unwrap_or("none"),
         imu.is_some(),
         power.is_some()
     );
@@ -184,6 +184,22 @@ fn main() -> ! {
                 spr.push_keyed(&mut display, Point::new(x, y), Rgb565::MAGENTA).ok();
             }
         }
+        // Touch: draw a dot where the panel is touched (every board with touch).
+        if let Some(t) = touch.as_mut() {
+            let mut pts = [TouchPoint::default(); 2];
+            if let Ok(n) = t.read(&mut pts) {
+                for p in &pts[..n] {
+                    Circle::with_center(Point::new(p.x as i32, p.y as i32), 9)
+                        .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
+                        .draw(&mut display)
+                        .ok();
+                }
+                if n > 0 && frame % 10 == 0 {
+                    println!("touch: {} point(s), first at ({}, {})", n, pts[0].x, pts[0].y);
+                }
+            }
+        }
+
         display.flush().ok(); // frame-buffered displays (StopWatch) send changes now
         redraw = false;
         frame += 1;

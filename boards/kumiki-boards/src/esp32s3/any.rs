@@ -202,6 +202,19 @@ pub enum AnyTouch {
     Ft6336(chips::Ft6336<SharedI2c>),
     /// CST820 (StopWatch).
     Cst820(chips::Cst820<SharedI2c>),
+    /// CST9217 (StopWatch, two-finger variant).
+    Cst9217(chips::Cst9217<SharedI2c>),
+}
+
+impl AnyTouch {
+    /// Controller name.
+    pub fn name(&self) -> &'static str {
+        match self {
+            AnyTouch::Ft6336(_) => "FT6336U",
+            AnyTouch::Cst820(_) => "CST820",
+            AnyTouch::Cst9217(_) => "CST9217",
+        }
+    }
 }
 
 impl Touch for AnyTouch {
@@ -210,6 +223,7 @@ impl Touch for AnyTouch {
         match self {
             AnyTouch::Ft6336(t) => t.read(out).map_err(AnyError::I2c),
             AnyTouch::Cst820(t) => t.read(out).map_err(AnyError::I2c),
+            AnyTouch::Cst9217(t) => t.read(out).map_err(AnyError::I2c),
         }
     }
 }

@@ -163,6 +163,47 @@ impl<I: I2c> kumiki_class::Touch for Cst820<I> {
     }
 }
 
+// ---- CST9217 -----------------------------------------------------------------
+
+/// CST9217 7-bit address (two-finger variant fitted to some StopWatch units).
+pub const CST9217_ADDR: u8 = 0x5A;
+
+/// Hynitron CST9217 touch controller. Port of M5GFX `Touch_CST9217::getTouchRaw`
+/// (BSD-2-Clause, LovyanGFX / MIT, M5Stack).
+pub struct Cst9217<I> {
+    /// The (shared) I²C device.
+    pub i2c: I,
+}
+
+impl<I: I2c> kumiki_class::Touch for Cst9217<I> {
+    type Error = I::Error;
+    fn read(&mut self, out: &mut [TouchPoint]) -> Result<usize, I::Error> {
+        let mut d = [0u8; 15];
+        let r = self.i2c.write_read(CST9217_ADDR, &[0xD0, 0x00], &mut d);
+        let _ = self.i2c.write(CST9217_ADDR, &[0xD0, 0x00, 0xAB]); // acknowledge the report
+        r?;
+        if d[6] != 0xAB || d[0] == 0xAB || d[0] == 0 {
+            return Ok(0);
+        }
+        let slots = ((d[5] & 0x7F) as usize).min(2);
+        let mut n = 0;
+        for i in 0..slots {
+            if n >= out.len() {
+                break;
+            }
+            let o = i * 5 + if i > 0 { 2 } else { 0 };
+            if d[o] & 0x0F != 0x06 {
+                continue; // not "pressed"
+            }
+            let x = ((d[o + 1] as i16) << 4) | (d[o + 3] >> 4) as i16;
+            let y = ((d[o + 2] as i16) << 4) | (d[o + 3] & 0x0F) as i16;
+            out[n] = TouchPoint { x, y, id: d[o] >> 4 };
+            n += 1;
+        }
+        Ok(n)
+    }
+}
+
 // ---- FT6336U -----------------------------------------------------------------
 
 /// FocalTech FT6336U touch controller (minimal polling reader).
