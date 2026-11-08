@@ -149,40 +149,42 @@ impl Descriptor {
 
 static mut READY: bool = false;
 
-/// Makes the AHB GDMA usable (once; later calls do nothing).
+/// Makes the AHB GDMA usable (once; later calls do nothing): bus clock on,
+/// block reset, the memory window set to L2MEM (0x4000_0000..0x4FFC_0000),
+/// as ESP-IDF does.
 ///
-/// If its bus clock is still off, nobody uses it yet: the clock is turned
-/// on and the block reset. If the clock is already on (an OS, or other
-/// drivers, run channels of their own), nothing is reset; channels are
-/// reset one by one in `configure`. The DMA's memory window is only ever
-/// widened to cover L2MEM (0x4000_0000..0x4FFC_0000), never narrowed.
+/// The reset stops every channel. An OS that runs AHB-GDMA channels of its
+/// own sets the block up itself and calls [`assume_initialized`] first;
+/// the drivers here then leave the block alone and only reset their own
+/// channel (in `configure`).
+///
+/// (The clock bit cannot tell whether someone uses the block: it is on from
+/// reset, with the window at 0..0xFFFF_FFFF. Skipping the reset and the
+/// window on that basis left the Tab5's I2S TX silent.)
 pub fn init() {
     if unsafe { READY } {
         return;
     }
-    let clocked = unsafe { rd(SOC_CLK_CTRL1) } & AHB_PDMA_SYS_CLK_EN != 0;
-    if !clocked {
-        set_bits(SOC_CLK_CTRL1, AHB_PDMA_SYS_CLK_EN);
-        set_bits(HP_RST_EN1, RST_EN_AHB_PDMA);
-        clear_bits(HP_RST_EN1, RST_EN_AHB_PDMA);
-        // ahb_dma_ll_force_enable_reg_clock, ahb_dma_ll_reset_fsm.
-        set_bits(MISC_CONF, MISC_CLK_EN);
-        set_bits(MISC_CONF, MISC_AHBM_RST_INTER);
-        clear_bits(MISC_CONF, MISC_AHBM_RST_INTER);
-    } else {
-        set_bits(MISC_CONF, MISC_CLK_EN);
-    }
-    // ahb_dma_ll_set_default_memory_range, as a union with what is set.
+    set_bits(SOC_CLK_CTRL1, AHB_PDMA_SYS_CLK_EN);
+    set_bits(HP_RST_EN1, RST_EN_AHB_PDMA);
+    clear_bits(HP_RST_EN1, RST_EN_AHB_PDMA);
+    // ahb_dma_ll_force_enable_reg_clock, ahb_dma_ll_reset_fsm,
+    // ahb_dma_ll_set_default_memory_range.
+    set_bits(MISC_CONF, MISC_CLK_EN);
+    set_bits(MISC_CONF, MISC_AHBM_RST_INTER);
+    clear_bits(MISC_CONF, MISC_AHBM_RST_INTER);
     unsafe {
-        let (start, end) = (rd(INTR_MEM_START), rd(INTR_MEM_END));
-        if !clocked || start > 0x4000_0000 || start == 0 {
-            wr(INTR_MEM_START, if clocked && start != 0 { start.min(0x4000_0000) } else { 0x4000_0000 });
-        }
-        if !clocked || end < 0x4FFC_0000 {
-            wr(INTR_MEM_END, if clocked { end.max(0x4FFC_0000) } else { 0x4FFC_0000 });
-        }
+        wr(INTR_MEM_START, 0x4000_0000);
+        wr(INTR_MEM_END, 0x4FFC_0000);
         READY = true;
     }
+}
+
+/// Declares the AHB GDMA set up by someone else (an OS): clock on, block
+/// reset done, memory window covering the drivers' memory. [`init`] then
+/// does nothing.
+pub fn assume_initialized() {
+    unsafe { READY = true };
 }
 
 /// Number of channels (each with a TX and an RX direction).
