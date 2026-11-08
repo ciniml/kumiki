@@ -8,5 +8,10 @@ authors = ["Kenta Ida <fuga@fugafuga.org>"]
 repository = "https://github.com/ciniml/kumiki"
 rust-version = "1.88"
 
+[features]
+default = ["log"]
+## Progress and diagnostic lines from the HAL's bring-up code on the console.
+log = []
+
 [dependencies]
 embedded-hal = "1.0"

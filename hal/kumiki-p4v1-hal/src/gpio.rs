@@ -195,6 +195,11 @@ impl Output {
         pin.set_output_enable(true);
         Output(pin)
     }
+
+    /// Turns the pin into an input.
+    pub fn into_input(self, pull: Pull) -> Input {
+        Input::new(self.0, pull)
+    }
 }
 
 /// Input.
@@ -217,6 +222,11 @@ impl Input {
     /// Whether the pin reads low.
     pub fn is_low(&self) -> bool {
         !self.0.input_level()
+    }
+
+    /// Turns the pin into a push-pull output at `high`.
+    pub fn into_output(self, high: bool) -> Output {
+        Output::new(self.0, high)
     }
 }
 

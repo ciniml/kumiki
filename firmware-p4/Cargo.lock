@@ -16,6 +16,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kumiki-tab5-demo"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+ "kumiki-p4v1-hal",
+]
+
+[[package]]
 name = "kumiki-tab5-hello"
 version = "0.1.0"
 dependencies = [
