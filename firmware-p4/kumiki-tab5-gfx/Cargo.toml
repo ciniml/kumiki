@@ -1,0 +1,21 @@
+[package]
+name = "kumiki-tab5-gfx"
+description = "M4b/M4c: kumiki-gfx FbDisplay on the Tab5's DSI panel (double buffer, PPA fills)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "kumiki-tab5-gfx"
+test = false
+bench = false
+
+[dependencies]
+kumiki-p4v1-hal = { path = "../../hal/kumiki-p4v1-hal", features = ["gfx"] }
+kumiki-gfx = { path = "../../gfx/kumiki-gfx" }
+embedded-graphics = "0.8"
+embedded-hal = { workspace = true }

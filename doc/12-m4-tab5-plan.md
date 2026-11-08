@@ -58,6 +58,24 @@ dt/kumiki-dtgen          p4v1 バックエンド（HAL アダプタ違い）
   - PI4IOE5V6408 #1 のレジスタ 0x01 は `0xa0`。
 - **CPU クロックは約 89MHz**（`mcycle` を SYSTIMER と比べて測定）。ブートローダは CPU を最高速度（360MHz）にしていない。M4b の前に、tab5-os の `clock.rs` を移植して CPU と PLL を設定する。
 
+### M4b / M4c 完了（2026-11-08）
+
+- tab5-os から `clock`（PVT と 360MHz）、`cache`、`psram`（HEX 200MHz、32MiB、タイミング調整）、`dsi`（ILI9881C、GDMA の LLI リング）、`ppa` を移植した。割り込みは使わず、`Dsi::service()` をポーリングで呼ぶ。
+- `kumiki-tab5-demo`（フレームバッファへの直接描画）: 64fps、アンダーラン 0。PPA の全画面塗りつぶしは 5.16ms（tab5-os の 5.1ms と同じ）、全画面コピーは 9.4ms。色の並びと動く箱を目視で確認した。
+- kumiki-gfx に `FramebufferPanel` / `FbDisplay` を追加し、HAL の `fb::DsiPanel`（feature `gfx`）で DSI を `FramebufferPanel` にした。
+  - ダブルバッファ。`present` は表示を切り替え、2 フレーム待ってから変更領域を PPA で新しい裏バッファへコピーする。
+  - 4096 ピクセル以上の塗りつぶしとコピーは PPA で行う。PPA が書く領域は、先にキャッシュを書き戻して無効化する。
+- `kumiki-tab5-gfx`（embedded-graphics の文字・図形 + `FbDisplay`）の実測値:
+
+| 項目 | 結果 |
+|---|---|
+| 全画面のクリア（PPA） | 5.2ms |
+| 画面全体の描画（文字・矩形・円・三角形） | 10.7ms |
+| 最初の present（全画面の書き戻しとコピー） | 23.6ms |
+| 動く箱の差分更新 | 33 回/秒（present ごとに 2 フレーム待つため）、アンダーラン 0 |
+
+- 残り: present の待ちを減らす（切り替えの完了を 1 フレームで判定できるか、裏バッファを 3 枚にするか）。ST7123 パネルは未対応（tab5-os でも未対応、手元の個体は ILI9881C）。
+
 ## 書き込みについて
 
 - Tab5 に書き込むと、いま入っている tab5-os のカーネル（0x10000）が上書きされる。tab5-os の `make flash-p4` で戻せる。

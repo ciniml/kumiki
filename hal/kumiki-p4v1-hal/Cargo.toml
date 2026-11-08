@@ -12,6 +12,10 @@ rust-version = "1.88"
 default = ["log"]
 ## Progress and diagnostic lines from the HAL's bring-up code on the console.
 log = []
+## `fb::DsiPanel`: the DSI output as a kumiki-gfx `FramebufferPanel`.
+gfx = ["dep:kumiki-gfx", "dep:embedded-graphics-core"]
 
 [dependencies]
 embedded-hal = "1.0"
+kumiki-gfx = { path = "../../gfx/kumiki-gfx", optional = true }
+embedded-graphics-core = { version = "0.4", optional = true }

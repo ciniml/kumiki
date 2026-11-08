@@ -27,6 +27,8 @@
 pub mod cache;
 pub mod clock;
 pub mod dsi;
+#[cfg(feature = "gfx")]
+pub mod fb;
 pub mod gpio;
 pub mod i2c;
 pub mod ppa;
