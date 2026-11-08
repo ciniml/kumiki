@@ -107,6 +107,7 @@ fn main() -> ! {
     let mut page = 0u8;
     let mut redraw = true;
     let mut frame = 0i32;
+    let (mut touch_ok, mut touch_err, mut touch_max) = (0u32, 0u32, 0usize);
     let (mut x, mut y, mut vx, mut vy) = (0i32, 0i32, 3i32, 2i32);
 
     loop {
@@ -187,7 +188,19 @@ fn main() -> ! {
         // Touch: draw a dot where the panel is touched (every board with touch).
         if let Some(t) = touch.as_mut() {
             let mut pts = [TouchPoint::default(); 2];
-            if let Ok(n) = t.read(&mut pts) {
+            let r = t.read(&mut pts);
+            match &r {
+                Ok(n) => {
+                    touch_ok += 1;
+                    touch_max = touch_max.max(*n);
+                }
+                Err(_) => touch_err += 1,
+            }
+            if frame % 120 == 0 {
+                println!("touch diag: ok {touch_ok}, err {touch_err}, max points {touch_max}");
+                (touch_ok, touch_err, touch_max) = (0, 0, 0);
+            }
+            if let Ok(n) = r {
                 for p in &pts[..n] {
                     Circle::with_center(Point::new(p.x as i32, p.y as i32), 9)
                         .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
