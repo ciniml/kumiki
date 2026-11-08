@@ -123,6 +123,13 @@ impl AnyPin {
         unsafe { wr(func_out_sel(self.0), sig as u32) };
     }
 
+    /// Routes peripheral output signal `sig` to this pin, with the output
+    /// enable taken from GPIO_ENABLE (set it with `set_output_enable`)
+    /// instead of from the peripheral.
+    pub(crate) fn connect_output_gpio_oe(&self, sig: u16) {
+        unsafe { wr(func_out_sel(self.0), sig as u32 | OUT_SEL_OE_FROM_ENABLE) };
+    }
+
     /// Routes this pin to peripheral input signal `sig`.
     pub(crate) fn connect_input(&self, sig: u16) {
         unsafe { wr(func_in_sel(sig), self.0 as u32 | SIG_IN_SEL) };

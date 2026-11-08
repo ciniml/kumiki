@@ -152,6 +152,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "kumiki-tab5-audio"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+ "kumiki-p4v1-hal",
+]
+
+[[package]]
 name = "kumiki-tab5-boards"
 version = "0.1.0"
 dependencies = [

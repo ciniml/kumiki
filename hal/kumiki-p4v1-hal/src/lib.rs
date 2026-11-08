@@ -33,9 +33,12 @@
 //!   [`psram::WINDOW`]
 //! - [`dsi`]: MIPI-DSI video output (720x1280 RGB565) from a framebuffer
 //! - [`ppa`]: PPA / 2D-DMA rectangle fill and copy
+//! - [`i2s`]: I2S0 full-duplex audio streaming (16-bit stereo) on
+//!   [`ahb_dma`] descriptor rings
 
 #![no_std]
 
+pub mod ahb_dma;
 pub mod cache;
 pub mod clock;
 pub mod console;
@@ -44,6 +47,7 @@ pub mod dsi;
 pub mod fb;
 pub mod gpio;
 pub mod i2c;
+pub mod i2s;
 pub mod ppa;
 pub mod psram;
 #[cfg(feature = "rt")]
@@ -130,6 +134,8 @@ pub struct Peripherals {
     pub i2c0: i2c::I2c0,
     /// I²C controller 1.
     pub i2c1: i2c::I2c1,
+    /// I2S controller 0 (with AHB-GDMA channel 0).
+    pub i2s0: i2s::I2s0,
 }
 
 static mut TAKEN: bool = false;
@@ -143,7 +149,7 @@ pub fn take() -> Option<Peripherals> {
         }
         TAKEN = true;
     }
-    Some(Peripherals { pins: gpio::Pins::new(), i2c0: i2c::I2c0(()), i2c1: i2c::I2c1(()) })
+    Some(Peripherals { pins: gpio::Pins::new(), i2c0: i2c::I2c0(()), i2c1: i2c::I2c1(()), i2s0: i2s::I2s0(()) })
 }
 
 /// Chip information read at run time.

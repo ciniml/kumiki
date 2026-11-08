@@ -7,7 +7,7 @@
 #   espflash write-bin --port /dev/ttyACM0 0x10000 hello.bin
 [workspace]
 resolver = "3"
-members = ["kumiki-tab5-hello", "kumiki-tab5-demo", "kumiki-tab5-gfx", "kumiki-tab5-boards"]
+members = ["kumiki-tab5-hello", "kumiki-tab5-demo", "kumiki-tab5-gfx", "kumiki-tab5-boards", "kumiki-tab5-audio"]
 
 [workspace.package]
 version = "0.1.0"
