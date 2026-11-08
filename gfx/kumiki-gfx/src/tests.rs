@@ -312,6 +312,53 @@ fn fb_display_uses_hw_fill_above_threshold() {
 }
 
 #[test]
+fn sin_cos_accuracy() {
+    for d in (-720..=720).step_by(7) {
+        let (s, c) = crate::sprite::sin_cos_deg(d as f32);
+        let r = (d as f64).to_radians();
+        assert!((s as f64 - r.sin()).abs() < 2e-6, "sin {d}");
+        assert!((c as f64 - r.cos()).abs() < 2e-6, "cos {d}");
+    }
+}
+
+#[test]
+fn sprite_rotate_zoom() {
+    // 4×2 source: row 0 = R G B Y, row 1 = magenta (key) everywhere but (0,1) = white.
+    let mut sbuf = [0u8; 4 * 2 * 2];
+    let mut spr = Sprite::<Rgb565Be, _>::new(&mut sbuf[..], 4, 2).unwrap();
+    for (x, c) in [Rgb565::RED, Rgb565::GREEN, Rgb565::BLUE, Rgb565::YELLOW].iter().enumerate() {
+        Pixel(Point::new(x as i32, 0), *c).draw(&mut spr).unwrap();
+    }
+    for x in 0..4 {
+        Pixel(Point::new(x, 1), if x == 0 { Rgb565::WHITE } else { Rgb565::MAGENTA }).draw(&mut spr).unwrap();
+    }
+    let px = |t: &Sprite<Rgb565Be, &mut [u8]>, x: i32, y: i32| Rgb565Be::decode(&t.bytes()[((y * 10 + x) * 2) as usize..]);
+
+    // 90° clockwise about (5, 5): source x runs down the screen, source y right-to-left.
+    let mut tbuf = [0u8; 10 * 10 * 2];
+    let mut t = Sprite::<Rgb565Be, _>::new(&mut tbuf[..], 10, 10).unwrap();
+    spr.push_rotate_zoom(&mut t, Point::new(5, 5), 90.0, 1.0, 1.0, Some(Rgb565::MAGENTA)).unwrap();
+    assert_eq!(px(&t, 5, 3), Rgb565::RED);
+    assert_eq!(px(&t, 5, 4), Rgb565::GREEN);
+    assert_eq!(px(&t, 5, 5), Rgb565::BLUE);
+    assert_eq!(px(&t, 5, 6), Rgb565::YELLOW);
+    assert_eq!(px(&t, 4, 3), Rgb565::WHITE);
+    assert_eq!(px(&t, 4, 4), Rgb565::BLACK, "keyed pixel left the target untouched");
+
+    // Unrotated, zoom 2: every source pixel becomes 2×2.
+    let mut tbuf = [0u8; 10 * 10 * 2];
+    let mut t = Sprite::<Rgb565Be, _>::new(&mut tbuf[..], 10, 10).unwrap();
+    spr.push_rotate_zoom(&mut t, Point::new(5, 5), 0.0, 2.0, 2.0, None).unwrap();
+    // Source (0,0) covers destination x 1..3, y 3..5.
+    for (x, y) in [(1, 3), (2, 3), (1, 4), (2, 4)] {
+        assert_eq!(px(&t, x, y), Rgb565::RED, "({x},{y})");
+    }
+    assert_eq!(px(&t, 7, 3), Rgb565::YELLOW);
+    assert_eq!(px(&t, 3, 5), Rgb565::MAGENTA, "no key: magenta drawn");
+    assert_eq!(px(&t, 0, 3), Rgb565::BLACK);
+}
+
+#[test]
 fn rotation_maps_round_trip() {
     use crate::Rotation;
     let native = Size::new(4, 6);
