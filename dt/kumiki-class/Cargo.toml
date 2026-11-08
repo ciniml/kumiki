@@ -1,0 +1,11 @@
+[package]
+name = "kumiki-class"
+description = "Board-independent device-class traits (touch, IMU, buttons, backlight, power) for kumiki boards"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]

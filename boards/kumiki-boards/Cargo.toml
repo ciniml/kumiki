@@ -1,0 +1,27 @@
+[package]
+name = "kumiki-boards"
+description = "Board definitions for kumiki (ESP32-S3: M5Stack CoreS3 / AtomS3) with runtime board detection"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Kenta Ida <fuga@fugafuga.org>"]
+repository = "https://github.com/ciniml/kumiki"
+
+[features]
+# Exactly one chip.
+chip-esp32s3 = ["kumiki-gfx-bus-esp/fifo-esp32s3"]
+# Optional board pinning (no feature = every board of the chip is a detection candidate).
+board-m5stack-cores3 = []
+board-m5stack-atoms3 = []
+
+[dependencies]
+kumiki-gfx = { path = "../../gfx/kumiki-gfx" }
+kumiki-gfx-panels = { path = "../../gfx/kumiki-gfx-panels" }
+kumiki-gfx-bus-esp = { path = "../../gfx/kumiki-gfx-bus-esp" }
+kumiki-class = { path = "../../dt/kumiki-class" }
+kumiki-mpu6886 = { path = "../../drivers/kumiki-mpu6886" }
+embedded-graphics-core = "0.4"
+embedded-hal = "1.0"
+embedded-hal-bus = "0.3"
+static_cell = "2"
+esp-hal = { version = ">=1.2, <1.4", features = ["requires-unstable"] }

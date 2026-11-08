@@ -68,6 +68,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "kumiki-class"
+version = "0.1.0"
+
+[[package]]
 name = "kumiki-gfx"
 version = "0.1.0"
 dependencies = [
@@ -94,6 +98,14 @@ dependencies = [
  "embedded-hal",
  "embedded-hal-async",
  "kumiki-gfx",
+]
+
+[[package]]
+name = "kumiki-mpu6886"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+ "embedded-hal-async",
 ]
 
 [[package]]

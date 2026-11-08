@@ -4,9 +4,11 @@ members = [
     "gfx/kumiki-gfx",
     "gfx/kumiki-gfx-panels",
     "gfx/kumiki-gfx-bus-ehal",
+    "dt/kumiki-class",
+    "drivers/kumiki-mpu6886",
 ]
 # ESP 依存のクレートとファームウェアは、ターゲット固有のビルド設定を持つ firmware/ ワークスペースでビルドする。
-exclude = ["gfx/kumiki-gfx-bus-esp", "firmware"]
+exclude = ["gfx/kumiki-gfx-bus-esp", "boards/kumiki-boards", "firmware"]
 
 [workspace.package]
 version = "0.1.0"
@@ -24,3 +26,4 @@ embedded-hal-async = "1.0"
 kumiki-gfx = { path = "gfx/kumiki-gfx" }
 kumiki-gfx-panels = { path = "gfx/kumiki-gfx-panels" }
 kumiki-gfx-bus-ehal = { path = "gfx/kumiki-gfx-bus-ehal" }
+kumiki-class = { path = "dt/kumiki-class" }

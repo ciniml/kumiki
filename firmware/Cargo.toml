@@ -1,8 +1,9 @@
 # Target-specific firmware (ESP32-S3 for now). Build from this directory:
 #   cargo build --release -p kumiki-bench --features cores3
+#   cargo build --release -p kumiki-demo          # one binary for CoreS3 and AtomS3
 [workspace]
 resolver = "3"
-members = ["kumiki-bench"]
+members = ["kumiki-bench", "kumiki-demo"]
 
 [profile.release]
 opt-level = 3
