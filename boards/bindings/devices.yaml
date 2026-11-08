@@ -1,0 +1,87 @@
+# Off-chip device bindings. `kumiki.bus` is the parent controller kind,
+# `kumiki.class` the kumiki-class trait the device provides.
+
+# ---- power / IO expanders ----------------------------------------------------
+- compatible: "x-powers,axp2101"
+  kumiki: { bus: i2c, class: power }
+  properties:
+    reg: { type: int, required: true }
+
+- compatible: "m5stack,m5pm1"
+  kumiki: { bus: i2c, class: power }
+  properties:
+    reg: { type: int, required: true }
+
+- compatible: "awinic,aw9523b"
+  kumiki: { bus: i2c, class: gpio-expander }
+  properties:
+    reg: { type: int, required: true }
+    gpio-controller: { type: boolean, required: true }
+    "#gpio-cells": { type: int, required: true }
+
+- compatible: "m5stack,m5ioe1"
+  kumiki: { bus: i2c, class: gpio-expander }
+  properties:
+    reg: { type: int, required: true }
+    gpio-controller: { type: boolean, required: true }
+    "#gpio-cells": { type: int, required: true }
+
+# ---- displays ------------------------------------------------------------------
+- compatible: "ilitek,ili9342c"
+  kumiki: { bus: spi, class: display }
+  properties: &dcs-panel
+    reg: { type: int, required: true }
+    spi-max-frequency: { type: int, required: true }
+    dc-gpios: { type: gpios }
+    reset-gpios: { type: gpios }
+    power-supply: { type: phandle }
+    backlight: { type: phandle }
+    width: { type: int, required: true }
+    height: { type: int, required: true }
+    kumiki,offset: { type: array, description: "x y offset inside controller memory" }
+    kumiki,invert: { type: boolean }
+    kumiki,rgb-order: { type: string, description: "rgb or bgr (default bgr)" }
+    kumiki,round-diameter: { type: int, description: "visible circle diameter of a round panel" }
+    kumiki,frame-buffer: { type: string, description: "draw through a RAM frame buffer (psram|internal)" }
+
+- compatible: "galaxycore,gc9107"
+  kumiki: { bus: spi, class: display }
+  properties: *dcs-panel
+
+- compatible: "chipone,co5300"
+  kumiki: { bus: spi, class: display }
+  properties: *dcs-panel
+
+# ---- touch -------------------------------------------------------------------------
+- compatible: "focaltech,ft6336u"
+  kumiki: { bus: i2c, class: touch }
+  properties: &touch
+    reg: { type: int, required: true }
+    touchscreen-min-x: { type: sint }
+    touchscreen-min-y: { type: sint }
+    touchscreen-size-x: { type: int }
+    touchscreen-size-y: { type: int }
+
+- compatible: "hynitron,cst820"
+  kumiki: { bus: i2c, class: touch }
+  properties: *touch
+
+- compatible: "hynitron,cst9217"
+  kumiki: { bus: i2c, class: touch }
+  properties: *touch
+
+# ---- sensors -----------------------------------------------------------------------
+- compatible: "bosch,bmi270"
+  kumiki: { bus: i2c, class: imu }
+  properties:
+    reg: { type: int, required: true }
+
+- compatible: "tdk,mpu6886"
+  kumiki: { bus: i2c, class: imu }
+  properties:
+    reg: { type: int, required: true }
+
+- compatible: "belling,bm8563"
+  kumiki: { bus: i2c, class: rtc }
+  properties:
+    reg: { type: int, required: true }

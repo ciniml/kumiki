@@ -1,0 +1,75 @@
+/*
+ * M5Stack AtomS3.
+ * Sources: https://docs.m5stack.com/en/core/AtomS3 (schematic v1.0),
+ *          M5GFX src/M5GFX.cpp (AtomS3 autodetect, MIT).
+ */
+/dts-v1/;
+
+#include <soc/espressif/esp32s3.dtsi>
+#include <kumiki/gpio.h>
+
+/ {
+	model = "M5Stack AtomS3";
+	compatible = "m5stack,atoms3", "espressif,esp32s3";
+
+	chosen {
+		kumiki,display = &lcd;
+		kumiki,imu = &imu;
+	};
+
+	lcd_backlight: backlight {
+		compatible = "gpio-backlight";
+		gpios = <&gpio 16 GPIO_ACTIVE_HIGH>;
+	};
+
+	buttons {
+		compatible = "gpio-keys";
+		button-a {
+			gpios = <&gpio 41 GPIO_ACTIVE_LOW>; /* the screen is the button */
+			kumiki,button = "a";
+		};
+	};
+
+	kumiki,detect {
+		compatible = "kumiki,board-detect";
+		/* The IMU is on a daughter board and may be missing: identify by panel id. */
+		panel-id {
+			compatible = "kumiki,probe-dcs-id-3wire";
+			display = <&lcd>;
+			expect = [00 91 07];
+		};
+	};
+};
+
+&i2c1 {
+	status = "okay";
+	clock-frequency = <400000>;
+	sda-gpios = <&gpio 38 GPIO_ACTIVE_HIGH>;
+	scl-gpios = <&gpio 39 GPIO_ACTIVE_HIGH>;
+	kumiki,bus-recovery;
+
+	imu: imu@68 {
+		compatible = "tdk,mpu6886";
+		reg = <0x68>;
+		kumiki,optional;
+	};
+};
+
+&spi2 {
+	status = "okay";
+	sck-gpios = <&gpio 17 GPIO_ACTIVE_HIGH>;
+	mosi-gpios = <&gpio 21 GPIO_ACTIVE_HIGH>;
+	cs-gpios = <&gpio 15 GPIO_ACTIVE_LOW>;
+
+	lcd: display@0 {
+		compatible = "galaxycore,gc9107";
+		reg = <0>;
+		spi-max-frequency = <40000000>;
+		dc-gpios = <&gpio 33 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&gpio 34 GPIO_ACTIVE_LOW>;
+		backlight = <&lcd_backlight>;
+		width = <128>;
+		height = <128>;
+		kumiki,offset = <0 32>;
+	};
+};

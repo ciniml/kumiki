@@ -110,8 +110,9 @@ impl AnyDisplay {
             AnyDisplay::StopWatch(d) => {
                 let s = d.size();
                 let (cx, cy) = (s.width as i32 / 2, s.height as i32 / 2);
-                // side = d / √2 for d = 466 → 329.5, rounded down to even.
-                let side = 466 * 1000 / 1414 & !1;
+                // DT `kumiki,round-diameter`; side = d / √2, rounded down to even.
+                let diameter = super::generated::stopwatch::lcd::ROUND_DIAMETER.unwrap_or(s.width) as i32;
+                let side = diameter * 1000 / 1414 & !1;
                 Rectangle::new(
                     embedded_graphics_core::geometry::Point::new((cx - side / 2) & !1, cy - side / 2),
                     Size::new(side as u32, side as u32),

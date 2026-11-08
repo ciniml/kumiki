@@ -1,0 +1,113 @@
+/*
+ * M5Stack CoreS3 / CoreS3 SE.
+ * Sources: https://docs.m5stack.com/en/core/CoreS3 ,
+ *          M5GFX src/M5GFX.cpp (CoreS3 autodetect / Panel_M5StackCoreS3, MIT).
+ */
+/dts-v1/;
+
+#include <soc/espressif/esp32s3.dtsi>
+#include <kumiki/gpio.h>
+
+/ {
+	model = "M5Stack CoreS3";
+	compatible = "m5stack,cores3", "espressif,esp32s3";
+
+	chosen {
+		kumiki,display = &lcd;
+		kumiki,touch = &touch;
+		kumiki,imu = &imu;
+		kumiki,power = &pmic;
+	};
+
+	lcd_backlight: backlight {
+		compatible = "kumiki,regulator-backlight";
+		power-supply = <&dldo1>;
+		default-brightness = <160>;
+	};
+
+	buttons {
+		compatible = "kumiki,touch-keys";
+		/* No front buttons: a touch anywhere acts as button A. */
+		touch = <&touch>;
+	};
+
+	kumiki,detect {
+		compatible = "kumiki,board-detect";
+		pmic-id {
+			compatible = "kumiki,probe-i2c-reg";
+			device = <&pmic>;
+			register = <0x03>;
+			expect = <0x4a>;
+		};
+		ioexp-id {
+			compatible = "kumiki,probe-i2c-reg";
+			device = <&ioexp>;
+			register = <0x10>;
+			expect = <0x23>;
+		};
+	};
+};
+
+&i2c0 {
+	status = "okay";
+	clock-frequency = <400000>;
+	sda-gpios = <&gpio 12 GPIO_ACTIVE_HIGH>;
+	scl-gpios = <&gpio 11 GPIO_ACTIVE_HIGH>;
+
+	pmic: pmic@34 {
+		compatible = "x-powers,axp2101";
+		reg = <0x34>;
+		regulators {
+			aldo1: ALDO1 { regulator-min-microvolt = <1800000>; regulator-max-microvolt = <1800000>; };
+			aldo2: ALDO2 { regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; };
+			aldo3: ALDO3 { regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; };
+			aldo4: ALDO4 { regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; };
+			dldo1: DLDO1 { regulator-name = "lcd-backlight"; };
+		};
+	};
+
+	ioexp: gpio@58 {
+		compatible = "awinic,aw9523b";
+		reg = <0x58>;
+		gpio-controller;
+		#gpio-cells = <2>;
+	};
+
+	touch: touchscreen@38 {
+		compatible = "focaltech,ft6336u";
+		reg = <0x38>;
+		touchscreen-size-x = <320>;
+		touchscreen-size-y = <240>;
+	};
+
+	imu: imu@69 {
+		compatible = "bosch,bmi270";
+		reg = <0x69>;
+	};
+
+	rtc: rtc@51 {
+		compatible = "belling,bm8563", "nxp,pcf8563";
+		reg = <0x51>;
+	};
+};
+
+&spi2 {
+	status = "okay";
+	sck-gpios = <&gpio 36 GPIO_ACTIVE_HIGH>;
+	mosi-gpios = <&gpio 37 GPIO_ACTIVE_HIGH>;
+	cs-gpios = <&gpio 3 GPIO_ACTIVE_LOW>;
+
+	lcd: display@0 {
+		compatible = "ilitek,ili9342c";
+		reg = <0>;
+		spi-max-frequency = <40000000>;
+		/* GPIO35 doubles as SPI MISO (shared with the SD slot). */
+		dc-gpios = <&gpio 35 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&ioexp 13 GPIO_ACTIVE_LOW>; /* AW9523B P1_5 */
+		power-supply = <&aldo3>;
+		backlight = <&lcd_backlight>;
+		width = <320>;
+		height = <240>;
+		kumiki,invert;
+	};
+};

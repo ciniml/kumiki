@@ -5,6 +5,24 @@ use esp_hal::{
     gpio::{DriveMode, Flex, InputConfig, Level, OutputConfig, Pin, Pull},
 };
 
+/// Read one register of an I²C device at 100 kHz, borrowing the controller
+/// and pins only for the call. `None` if the device does not answer.
+pub fn i2c_read_reg<'a>(
+    i2c: impl esp_hal::i2c::master::Instance + 'a,
+    sda: impl esp_hal::gpio::interconnect::PeripheralInput<'a> + esp_hal::gpio::interconnect::PeripheralOutput<'a>,
+    scl: impl esp_hal::gpio::interconnect::PeripheralInput<'a> + esp_hal::gpio::interconnect::PeripheralOutput<'a>,
+    addr: u8,
+    reg: u8,
+) -> Option<u8> {
+    use esp_hal::i2c::master::{Config, I2c};
+    let mut bus = I2c::new(i2c, Config::default().with_frequency(esp_hal::time::Rate::from_khz(100)))
+        .ok()?
+        .with_sda(sda)
+        .with_scl(scl);
+    let mut b = [0u8];
+    bus.write_read(addr, &[reg], &mut b).ok().map(|_| b[0])
+}
+
 /// I²C bus recovery (NXP UM10204 §3.1.16): if a target holds SDA low (e.g.
 /// the MCU was reset in the middle of a read while the device stayed powered),
 /// clock SCL up to 9 times until SDA is released, then issue a STOP.

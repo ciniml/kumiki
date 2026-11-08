@@ -1,0 +1,113 @@
+/*
+ * M5Stack StopWatch (ESP32-S3R8, 1.75" round AMOLED).
+ * Sources: https://docs.m5stack.com/en/core/StopWatch ,
+ *          M5GFX master src/board_detect (board_spec data, pmic_ops, MIT).
+ */
+/dts-v1/;
+
+#include <soc/espressif/esp32s3.dtsi>
+#include <kumiki/gpio.h>
+
+/ {
+	model = "M5Stack StopWatch";
+	compatible = "m5stack,stopwatch", "espressif,esp32s3";
+
+	chosen {
+		kumiki,display = &lcd;
+		kumiki,touch = &touch_cst820, &touch_cst9217;
+		kumiki,imu = &imu;
+	};
+
+	lcd_backlight: backlight {
+		compatible = "kumiki,dcs-backlight"; /* AMOLED brightness command 0x51 */
+		display = <&lcd>;
+	};
+
+	buttons {
+		compatible = "gpio-keys";
+		button-a {
+			gpios = <&gpio 2 GPIO_ACTIVE_LOW>;
+			kumiki,button = "a";
+		};
+		button-b {
+			gpios = <&gpio 1 GPIO_ACTIVE_LOW>;
+			kumiki,button = "b";
+		};
+	};
+
+	kumiki,detect {
+		compatible = "kumiki,board-detect";
+		pmic-ack {
+			compatible = "kumiki,probe-i2c-ack";
+			device = <&pm1>;
+			register = <0x00>;
+		};
+	};
+};
+
+&i2c1 {
+	status = "okay";
+	clock-frequency = <100000>;
+	sda-gpios = <&gpio 47 GPIO_ACTIVE_HIGH>;
+	scl-gpios = <&gpio 48 GPIO_ACTIVE_HIGH>;
+	kumiki,bus-recovery;
+
+	pm1: pmic@6e {
+		compatible = "m5stack,m5pm1";
+		reg = <0x6e>;
+	};
+
+	ioe1: gpio@4f {
+		compatible = "m5stack,m5ioe1";
+		reg = <0x4f>;
+		gpio-controller;
+		#gpio-cells = <2>;
+		kumiki,depends-on = <&pm1>; /* boots after the PMIC rails are up */
+	};
+
+	/* Second-source touch controllers (Linux i2c-of-prober convention). */
+	touch_cst820: touchscreen@15 {
+		compatible = "hynitron,cst820";
+		reg = <0x15>;
+		status = "fail-needs-probe";
+		kumiki,probe-group = "touch";
+		/* Measured on a real unit (3-point fit, 2026-11-08). */
+		touchscreen-min-x = <(-29)>;
+		touchscreen-min-y = <(-40)>;
+		touchscreen-size-x = <526>;
+		touchscreen-size-y = <528>;
+	};
+
+	touch_cst9217: touchscreen@5a {
+		compatible = "hynitron,cst9217";
+		reg = <0x5a>;
+		status = "fail-needs-probe";
+		kumiki,probe-group = "touch";
+	};
+
+	imu: imu@68 {
+		compatible = "bosch,bmi270";
+		reg = <0x68>;
+	};
+};
+
+&spi2 {
+	status = "okay";
+	sck-gpios = <&gpio 40 GPIO_ACTIVE_HIGH>;
+	cs-gpios = <&gpio 39 GPIO_ACTIVE_LOW>;
+	sio-gpios = <&gpio 41 0>, <&gpio 42 0>, <&gpio 46 0>, <&gpio 45 0>;
+
+	lcd: display@0 {
+		compatible = "chipone,co5300";
+		reg = <0>;
+		spi-max-frequency = <40000000>;
+		kumiki,depends-on = <&ioe1>; /* panel power and reset come from the IO expander */
+		backlight = <&lcd_backlight>;
+		width = <468>;
+		height = <468>;
+		kumiki,offset = <6 0>;
+		kumiki,rgb-order = "rgb";
+		kumiki,round-diameter = <466>;
+		kumiki,frame-buffer = "psram";
+	};
+};

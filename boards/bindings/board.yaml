@@ -1,0 +1,46 @@
+# Board-level bindings: backlights, buttons, detection rules.
+
+- compatible: "kumiki,regulator-backlight"
+  kumiki: { class: backlight }
+  properties:
+    power-supply: { type: phandle, required: true }
+    default-brightness: { type: int }
+
+- compatible: "gpio-backlight"
+  kumiki: { class: backlight }
+  properties:
+    gpios: { type: gpios, required: true }
+    default-on: { type: boolean }
+
+- compatible: "kumiki,dcs-backlight"
+  kumiki: { class: backlight }
+  properties:
+    display: { type: phandle, required: true }
+
+- compatible: "gpio-keys"
+  kumiki: { class: buttons, child-props: { gpios: gpios, "kumiki,button": string } }
+  properties: {}
+
+- compatible: "kumiki,touch-keys"
+  kumiki: { class: buttons }
+  properties:
+    touch: { type: phandle, required: true }
+
+- compatible: "kumiki,board-detect"
+  properties: {}
+
+- compatible: "kumiki,probe-i2c-reg"
+  properties:
+    device: { type: phandle, required: true }
+    register: { type: int, required: true }
+    expect: { type: int, required: true }
+
+- compatible: "kumiki,probe-i2c-ack"
+  properties:
+    device: { type: phandle, required: true }
+    register: { type: int, required: true }
+
+- compatible: "kumiki,probe-dcs-id-3wire"
+  properties:
+    display: { type: phandle, required: true }
+    expect: { type: uint8-array, required: true }

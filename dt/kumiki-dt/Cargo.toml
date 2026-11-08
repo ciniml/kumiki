@@ -1,0 +1,11 @@
+[package]
+name = "kumiki-dt"
+description = "Device Tree Source (DTS) preprocessor, parser and merger in pure Rust (no dtc / cpp needed)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]

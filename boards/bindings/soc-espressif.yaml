@@ -1,0 +1,37 @@
+# Espressif SoC controller bindings (chip layer).
+# Property types: int (u32), sint (i32), boolean, string, string-array,
+# array (u32 list), uint8-array, phandle, phandle-array, gpios.
+
+- compatible: "simple-bus"
+  properties:
+    ranges: { type: boolean }
+
+- compatible: "espressif,esp32-gpio"
+  properties:
+    gpio-controller: { type: boolean, required: true }
+    "#gpio-cells": { type: int, required: true }
+    ngpios: { type: int, required: true }
+    reg: { type: array }
+    kumiki,octal-psram-pins: { type: array, description: "GPIOs owned by embedded octal PSRAM" }
+
+- compatible: "espressif,esp32-i2c"
+  kumiki:
+    controller: i2c
+  properties:
+    reg: { type: array }
+    kumiki,instance: { type: string, required: true }
+    clock-frequency: { type: int }
+    sda-gpios: { type: gpios }
+    scl-gpios: { type: gpios }
+    kumiki,bus-recovery: { type: boolean, description: "clock SCL to free a stuck target before use" }
+
+- compatible: "espressif,esp32-spi"
+  kumiki:
+    controller: spi
+  properties:
+    reg: { type: array }
+    kumiki,instance: { type: string, required: true }
+    sck-gpios: { type: gpios }
+    mosi-gpios: { type: gpios }
+    cs-gpios: { type: gpios }
+    sio-gpios: { type: gpios, description: "SIO0..SIO3 for quad SPI" }

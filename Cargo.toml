@@ -5,6 +5,8 @@ members = [
     "gfx/kumiki-gfx-panels",
     "gfx/kumiki-gfx-bus-ehal",
     "dt/kumiki-class",
+    "dt/kumiki-dt",
+    "dt/kumiki-dtgen",
     "drivers/kumiki-mpu6886",
     "drivers/kumiki-bmi270",
 ]
