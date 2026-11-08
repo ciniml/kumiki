@@ -1,0 +1,16 @@
+[package]
+name = "kumiki-gfx-bus-esp"
+description = "ESP32-family DMA panel buses (SPI DMA double buffering) for kumiki-gfx"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Kenta Ida <fuga@fugafuga.org>"]
+repository = "https://github.com/ciniml/kumiki"
+
+[dependencies]
+kumiki-gfx = { path = "../kumiki-gfx" }
+esp-hal = { version = ">=1.2, <1.4", features = ["requires-unstable"] }
+
+[features]
+# The application selects the chip on esp-hal; these only exist for standalone checks.
+esp32s3 = ["esp-hal/esp32s3", "esp-hal/unstable"]

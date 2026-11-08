@@ -1,0 +1,22 @@
+[package]
+name = "kumiki-bench"
+description = "kumiki-gfx benchmarks (compare with M5GFX, doc/10-performance-plan.md)"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[features]
+cores3 = []
+atoms3 = []
+
+[dependencies]
+kumiki-gfx = { path = "../../gfx/kumiki-gfx" }
+kumiki-gfx-panels = { path = "../../gfx/kumiki-gfx-panels" }
+kumiki-gfx-bus-esp = { path = "../../gfx/kumiki-gfx-bus-esp" }
+embedded-graphics = "0.8"
+embedded-hal = "1.0"
+esp-hal = { version = "1.2", features = ["esp32s3", "unstable"] }
+esp-backtrace = { version = "0.20", features = ["esp32s3", "panic-handler", "println"] }
+esp-println = { version = "0.18", features = ["esp32s3"] }
+esp-bootloader-esp-idf = { version = "0.6", features = ["esp32s3"] }
