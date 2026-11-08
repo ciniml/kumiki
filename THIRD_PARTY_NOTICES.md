@@ -40,6 +40,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## M5Unified
+
+Used for: RTC register use and start-up writes (`drivers/kumiki-rtc`, from
+M5Unified 0.2.13 `src/utility/rtc/{PCF8563,RX8130}_Class.cpp`). Same MIT
+license text as M5GFX above, Copyright (c) 2021 M5Stack.
+
 ## LovyanGFX
 
 The M5GFX graphics core (`src/lgfx/v1`) is LovyanGFX, licensed under the

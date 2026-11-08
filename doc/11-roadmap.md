@@ -107,6 +107,8 @@
 
 | 共通化の確認 | アプリ本体を HAL から独立させ（`firmware/kumiki-demo/src/app.rs`）、`Any*` を生成に切り替えた後のバイナリで、CoreS3 / AtomS3 / StopWatch / Tab5 の 4 機種の判別と初期化を確認した（2026-11-08） |
 
+| M5（進行中） | スプライトの回転・拡大縮小（`Sprite::push_rotate_zoom`、M5GFX の `pushRotateZoom` 相当）。RTC（`kumiki-class::Rtc`、`kumiki-rtc` に PCF8563 / BM8563 と RX8130、DT の `chosen { kumiki,rtc }` から生成）。Tab5 の RX8130 で読み出しと時刻の進みを確認、CoreS3 の BM8563 は実機確認待ち。オーディオは未着手 |
+
 ### 実機で分かったこと
 
 - **AtomS3 の判別は IMU に頼らない**：手元の個体は IMU の小基板の SDA が本体とつながっておらず（内部プルダウンで Low、プルアップで High = 線が浮いている）、M5Unified でも IMU が見えなかった。M5GFX と同じくパネル ID（GC9107 の RDDID）で判別する。
