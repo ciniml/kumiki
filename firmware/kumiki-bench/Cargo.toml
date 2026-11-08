@@ -7,8 +7,11 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [features]
+default = ["fifo"]
 cores3 = []
 atoms3 = []
+# Small transfers through the SPI FIFO instead of DMA (disable to compare).
+fifo = ["kumiki-gfx-bus-esp/fifo-esp32s3"]
 
 [dependencies]
 kumiki-gfx = { path = "../../gfx/kumiki-gfx" }

@@ -1,0 +1,4 @@
+dependencies:
+  M5GFX:
+    git: https://github.com/m5stack/M5GFX
+    version: 0.2.19

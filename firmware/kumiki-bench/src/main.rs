@@ -75,6 +75,9 @@ fn main() -> ! {
     let dc = Output::new(pins.dc, Level::High, OutputConfig::default());
     let cs = Output::new(pins.cs, Level::High, OutputConfig::default());
     let bus = EspSpiDmaBus::new(spi, dc, Some(cs), dma_tx_buffer!(16384).unwrap(), dma_tx_buffer!(16384).unwrap());
+    #[cfg(feature = "fifo")]
+    let bus = bus.with_fifo(kumiki_gfx_bus_esp::SpiHost::Spi2);
+    println!("fifo fast path: {}", cfg!(feature = "fifo"));
 
     let cfg = DcsConfig { ..board::panel_config() };
     let mut panel = DcsPanel::new(bus, board::Model, cfg, None::<NoPin>);

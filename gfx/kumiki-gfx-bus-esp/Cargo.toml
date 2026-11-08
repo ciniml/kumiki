@@ -10,7 +10,12 @@ repository = "https://github.com/ciniml/kumiki"
 [dependencies]
 kumiki-gfx = { path = "../kumiki-gfx" }
 esp-hal = { version = ">=1.2, <1.4", features = ["requires-unstable"] }
+# Direct register access for the small-transfer FIFO fast path (same PAC version as esp-hal 1.2).
+esp32s3 = { version = "0.36", optional = true }
 
 [features]
 # The application selects the chip on esp-hal; these only exist for standalone checks.
-esp32s3 = ["esp-hal/esp32s3", "esp-hal/unstable"]
+esp32s3-check = ["esp-hal/esp32s3", "esp-hal/unstable", "fifo-esp32s3"]
+# Send transfers of <= 64 bytes (commands, window setup, short runs) through the
+# SPI FIFO registers instead of a DMA round trip, like M5GFX does.
+fifo-esp32s3 = ["dep:esp32s3"]

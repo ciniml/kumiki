@@ -1011,6 +1011,7 @@ name = "kumiki-gfx-bus-esp"
 version = "0.1.0"
 dependencies = [
  "esp-hal",
+ "esp32s3",
  "kumiki-gfx",
 ]
 
