@@ -38,6 +38,7 @@ macro_rules! take_spare {
 #[macro_use]
 pub mod generated;
 mod any;
+pub mod audio;
 pub mod bind;
 pub mod chips;
 pub mod probe;
@@ -50,7 +51,7 @@ use kumiki_gfx_bus_esp::{EspQspiDmaBus, EspSpiDmaBus};
 use kumiki_gfx_panels::{Co5300, DcsPanel, Gc9107, Ili9342c};
 
 pub use any::{AnyAsyncDisplay, AnyError};
-pub use generated::{AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnyTouch, BoardId, DetectLog};
+pub use generated::{AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnySpeaker, AnyTouch, BoardId, DetectLog};
 
 /// Push-pull output (e.g. a GPIO backlight).
 pub type GpioOut = esp_hal::gpio::Output<'static>;
@@ -122,6 +123,8 @@ pub struct Devices {
     pub power: Option<AnyPower>,
     /// Real-time clock, if any (DT `chosen { kumiki,rtc }`).
     pub rtc: Option<AnyRtc>,
+    /// Audio output, if any (DT `chosen { kumiki,speaker }`).
+    pub speaker: Option<AnySpeaker>,
     /// Button raw-state source.
     pub buttons: ButtonInputs,
     /// Peripherals the board definition does not use, handed back to the

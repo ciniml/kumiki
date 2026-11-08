@@ -18,6 +18,7 @@
 		kumiki,imu = &imu;
 		kumiki,power = &pmic;
 		kumiki,rtc = &rtc;
+		kumiki,speaker = &speaker;
 	};
 
 	lcd_backlight: backlight {
@@ -107,6 +108,23 @@
 		compatible = "belling,bm8563", "nxp,pcf8563";
 		reg = <0x51>;
 	};
+
+	/* Speaker amplifier: control over I2C, audio from I2S1. Its reset /
+	 * enable is AW9523 P0.2 (amp-reset-hog above). */
+	speaker: amplifier@36 {
+		compatible = "awinic,aw88298";
+		reg = <0x36>;
+		i2s = <&i2s1>;
+		kumiki,sample-rate = <48000>;
+		kumiki,depends-on = <&ioexp>;
+	};
+};
+
+&i2s1 {
+	status = "okay";
+	bclk-gpios = <&gpio 34 GPIO_ACTIVE_HIGH>;
+	ws-gpios = <&gpio 33 GPIO_ACTIVE_HIGH>;
+	dout-gpios = <&gpio 13 GPIO_ACTIVE_HIGH>;
 };
 
 &spi2 {

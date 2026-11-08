@@ -119,6 +119,7 @@ const PRELUDE: &str = r#"mod prelude {
         dma::DmaTxBuf,
         gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
         i2c::master::{Config as I2cConfig, I2c},
+        i2s::master::{Channels, DataFormat, I2s, TdmConfig},
         peripherals::Peripherals,
         spi::{Mode, master::{Config as SpiConfig, Spi}},
         time::Rate,
@@ -129,7 +130,7 @@ const PRELUDE: &str = r#"mod prelude {
     pub use kumiki_mpu6886::Mpu6886;
     pub use static_cell::StaticCell;
     pub use super::super::{
-        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
+        audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
         Spare,
     };
 }
@@ -152,7 +153,7 @@ const PRELUDE_P4V1: &str = r#"mod prelude {
     };
     pub use static_cell::StaticCell;
     pub use super::super::{
-        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
+        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
         Spare,
     };
 }
@@ -256,7 +257,12 @@ impl Ctx<'_> {
                 format!("{}::{}", label(tree, &path), ident_upper(prop))
             }
             "instance" => {
-                let path = if arg == "parent" { Tree::parent_path(&self.path).unwrap() } else { self.path.clone() };
+                // `${instance}`, `${instance:parent}` or `${instance:@PROP.}` (a phandle target).
+                let path = match arg {
+                    "" => self.path.clone(),
+                    "parent" => Tree::parent_path(&self.path).unwrap(),
+                    spec => self.target(spec)?.0,
+                };
                 let inst = self.node(&path).prop("kumiki,instance").and_then(|p| p.str()).ok_or_else(|| self.err("no kumiki,instance"))?;
                 format!("p.{inst}")
             }
@@ -483,12 +489,13 @@ fn emit_init(out: &mut String, board: &Board, bindings: &Bindings, backend: Back
     let power = chosen_refs(tree, "kumiki,power").first().map(|p| format!("Some({})", var_of(p))).unwrap_or_else(|| "None".into());
     // RTC init templates yield an Option (the chip may not answer).
     let rtc = chosen_refs(tree, "kumiki,rtc").first().map(|p| var_of(p)).unwrap_or_else(|| "None".into());
+    let speaker = chosen_refs(tree, "kumiki,speaker").first().map(|p| var_of(p)).unwrap_or_else(|| "None".into());
     let backlight = class_node("backlight").map(|p| var_of(&p)).unwrap_or_else(|| "AnyBacklight::None".into());
     let buttons = class_node("buttons").map(|p| var_of(&p)).ok_or_else(|| Error(format!("{}: no buttons node", board.source.display())))?;
     writeln!(out, "        Ok(Devices {{").unwrap();
     writeln!(out, "            board: super::BoardId::{},", variant_of(board.model())).unwrap();
     writeln!(out, "            display: {},", var_of(&display)).unwrap();
-    writeln!(out, "            backlight: {backlight},\n            touch: {touch},\n            imu: {imu},\n            power: {power},\n            rtc: {rtc},").unwrap();
+    writeln!(out, "            backlight: {backlight},\n            touch: {touch},\n            imu: {imu},\n            power: {power},\n            rtc: {rtc},\n            speaker: {speaker},").unwrap();
     writeln!(out, "            buttons: {buttons},\n            spare,\n        }})\n    }}").unwrap();
     Ok(())
 }
@@ -722,6 +729,7 @@ const ANY_CLASSES: &[(&str, &str, &str)] = &[
     ("power", "AnyPower", "Power / battery information"),
     ("backlight", "AnyBacklight", "Backlight"),
     ("rtc", "AnyRtc", "Real-time clock"),
+    ("speaker", "AnySpeaker", "Audio output"),
 ];
 
 /// Emit the `Any<Class>` enums: one variant per binding `kumiki.variant`

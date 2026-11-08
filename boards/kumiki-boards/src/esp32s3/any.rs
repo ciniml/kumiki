@@ -11,12 +11,12 @@ use embedded_graphics_core::{
     primitives::Rectangle,
     Pixel,
 };
-use kumiki_class::{Backlight, DateTime, Imu, Power, Rtc, Touch, TouchPoint, Vec3};
+use kumiki_class::{Backlight, DateTime, Imu, Power, Rtc, Speaker, Touch, TouchPoint, Vec3};
 use kumiki_gfx::{AsyncFastDraw, FastDraw, PixelFormat, Rgb565Be};
 use kumiki_gfx_bus_esp::Error as BusError;
 
 use super::{
-    AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnyTouch, Co5300AsyncDisplay, Gc9107AsyncDisplay, Ili9342cAsyncDisplay,
+    AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnySpeaker, AnyTouch, Co5300AsyncDisplay, Gc9107AsyncDisplay, Ili9342cAsyncDisplay,
 };
 
 type I2cError = esp_hal::i2c::master::Error;
@@ -219,6 +219,22 @@ impl Rtc for AnyRtc {
     }
     fn power_lost(&mut self) -> Result<bool, AnyError> {
         any_rtc!(self, r => r.power_lost().map_err(AnyError::from))
+    }
+}
+
+impl Speaker for AnySpeaker {
+    type Error = AnyError;
+    fn sample_rate(&self) -> u32 {
+        any_speaker!(self, s => s.sample_rate())
+    }
+    fn play(&mut self, frames: &[[i16; 2]]) -> Result<(), AnyError> {
+        any_speaker!(self, s => s.play(frames).map_err(AnyError::from))
+    }
+    fn idle(&mut self) -> Result<(), AnyError> {
+        any_speaker!(self, s => s.idle().map_err(AnyError::from))
+    }
+    fn set_volume(&mut self, level: u8) -> Result<(), AnyError> {
+        any_speaker!(self, s => s.set_volume(level).map_err(AnyError::from))
     }
 }
 

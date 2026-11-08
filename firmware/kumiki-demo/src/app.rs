@@ -27,7 +27,7 @@ use embedded_graphics::{
     text::Text,
 };
 use kumiki_boards::Devices;
-use kumiki_class::{Backlight, ButtonKind, Buttons, Imu, Power, Rtc, Touch, TouchPoint};
+use kumiki_class::{Backlight, ButtonKind, Buttons, Imu, Power, Rtc, Speaker, Touch, TouchPoint};
 use kumiki_gfx::{FastDraw, Rgb565Be, Sprite, Viewport};
 
 use crate::platform::{delay_ms, now_ms};
@@ -89,17 +89,49 @@ fn draw_page0<D: Canvas>(d: &mut D, name: &str) {
     text(d, "A: next page", 2, Rgb565::new(16, 32, 16));
 }
 
+/// A short triangle-wave beep (`hz`, `ms`) with a 5 ms fade in and out.
+fn beep<S: Speaker>(s: &mut S, hz: u32, ms: u32) {
+    let rate = s.sample_rate();
+    let total = rate * ms / 1000;
+    let fade = rate / 200;
+    let period = (rate / hz).max(2);
+    let mut chunk = [[0i16; 2]; 128];
+    let mut n = 0;
+    while n < total {
+        let k = (total - n).min(chunk.len() as u32);
+        for (i, f) in chunk[..k as usize].iter_mut().enumerate() {
+            let t = n + i as u32;
+            let ph = (t % period) as i32 * 4 * 12_000 / period as i32; // 0..48000
+            let tri = if ph < 24_000 { ph - 12_000 } else { 36_000 - ph }; // ±12000
+            let env = t.min(total - t).min(fade) as i32;
+            let v = (tri * env / fade.max(1) as i32) as i16;
+            *f = [v, v];
+        }
+        if s.play(&chunk[..k as usize]).is_err() {
+            return;
+        }
+        n += k;
+    }
+}
+
 /// Runs the demo on the brought-up board; never returns.
 pub fn run(dev: Devices) -> ! {
-    let Devices { board, mut display, mut backlight, mut touch, mut imu, mut power, mut rtc, mut buttons, .. } = dev;
+    let Devices { board, mut display, mut backlight, mut touch, mut imu, mut power, mut rtc, mut speaker, mut buttons, .. } =
+        dev;
     println!(
-        "kumiki-demo: detected {} (touch: {}, imu: {}, power: {}, rtc: {})",
+        "kumiki-demo: detected {} (touch: {}, imu: {}, power: {}, rtc: {}, speaker: {})",
         board.name(),
         touch.as_ref().map(|t| t.name()).unwrap_or("none"),
         imu.is_some(),
         power.is_some(),
-        rtc.as_ref().map(|r| r.name()).unwrap_or("none")
+        rtc.as_ref().map(|r| r.name()).unwrap_or("none"),
+        speaker.as_ref().map(|s| s.name()).unwrap_or("none")
     );
+    if let Some(s) = speaker.as_mut() {
+        s.set_volume(96).ok();
+        beep(s, 660, 80);
+        beep(s, 990, 80);
+    }
     if let Some(r) = rtc.as_mut() {
         println!("rtc: {:?}, power lost: {:?}", r.datetime(), r.power_lost());
     }
@@ -134,6 +166,12 @@ pub fn run(dev: Devices) -> ! {
                 println!("button {:?} click -> page {}", e.id, page);
             }
         });
+        if let Some(s) = speaker.as_mut() {
+            if redraw && frame > 0 {
+                beep(s, 880 + 110 * page as u32, 40);
+            }
+            s.idle().ok();
+        }
 
         let size = display.size();
         if redraw && page != 3 {

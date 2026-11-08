@@ -10,11 +10,11 @@ use embedded_graphics_core::{
     primitives::Rectangle,
     Pixel,
 };
-use kumiki_class::{Backlight, DateTime, Imu, Power, Rtc, Touch, TouchPoint, Vec3};
+use kumiki_class::{Backlight, DateTime, Imu, Power, Rtc, Speaker, Touch, TouchPoint, Vec3};
 use kumiki_gfx::{FastDraw, PixelFormat, Rgb565Le};
 use kumiki_p4v1_hal::i2c;
 
-use super::{AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnyTouch};
+use super::{AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnySpeaker, AnyTouch};
 
 /// Display error: a 2D-engine (PPA) failure while presenting.
 pub type DisplayError = kumiki_p4v1_hal::fb::PpaError;
@@ -152,6 +152,24 @@ impl Rtc for AnyRtc {
     }
     fn power_lost(&mut self) -> Result<bool, AnyError> {
         any_rtc!(self, r => r.power_lost().map_err(AnyError::from))
+    }
+}
+
+// No speaker is described for this family yet: the enum is empty.
+#[allow(unused_variables)]
+impl Speaker for AnySpeaker {
+    type Error = AnyError;
+    fn sample_rate(&self) -> u32 {
+        any_speaker!(self, s => s.sample_rate())
+    }
+    fn play(&mut self, frames: &[[i16; 2]]) -> Result<(), AnyError> {
+        any_speaker!(self, s => s.play(frames).map_err(AnyError::from))
+    }
+    fn idle(&mut self) -> Result<(), AnyError> {
+        any_speaker!(self, s => s.idle().map_err(AnyError::from))
+    }
+    fn set_volume(&mut self, level: u8) -> Result<(), AnyError> {
+        any_speaker!(self, s => s.set_volume(level).map_err(AnyError::from))
     }
 }
 

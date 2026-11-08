@@ -26,6 +26,8 @@ pub struct SocInfo {
     pub i2c: Vec<String>,
     /// SPI master instances usable by the application (`SPI2`, …).
     pub spi: Vec<String>,
+    /// I²S instances (`I2S0`, …).
+    pub i2s: Vec<String>,
 }
 
 /// Arguments of every `<name>!((…))` invocation in `text` (the part inside
@@ -94,6 +96,13 @@ pub fn parse_metadata(text: &str) -> Result<SocInfo, Error> {
             info.spi.push(f[0].to_string());
         }
     }
+    for args in invocations(text, "_for_each_inner_i2s") {
+        // Detailed form: `I2S0, I2s0, I2S0_MCLK, …`
+        let f: Vec<&str> = args.split(',').map(str::trim).collect();
+        if f.len() >= 3 && f[0].starts_with("I2S") && !info.i2s.contains(&f[0].to_string()) {
+            info.i2s.push(f[0].to_string());
+        }
+    }
     info.gpios.sort_unstable();
     info.octal_psram_pins.sort_unstable();
     if info.gpios.is_empty() || info.i2c.is_empty() {
@@ -147,6 +156,9 @@ pub fn generate(chip: &str, info: &SocInfo, pac: &str, sources: &[String]) -> Re
     for s in &info.spi {
         nodes.push((s.to_lowercase(), s, addr(s)?, "spi"));
     }
+    for s in &info.i2s {
+        nodes.push((s.to_lowercase(), s, addr(s)?, "i2s"));
+    }
     for (label, inst, a, kind) in &nodes {
         writeln!(o, "\n\t\t{label}: {kind}@{a:x} {{\n\t\t\tcompatible = \"espressif,esp32-{kind}\";\n\t\t\treg = <{a:#x} 0x1000>;").unwrap();
         writeln!(o, "\t\t\t#address-cells = <1>;\n\t\t\t#size-cells = <0>;\n\t\t\tkumiki,instance = \"{inst}\";\n\t\t\tstatus = \"disabled\";\n\t\t}};").unwrap();
@@ -170,10 +182,12 @@ mod tests {
         _for_each_inner_i2c_master!((0, I2C0, I2cExt0, I2CEXT0_SCL, I2CEXT0_SDA));
         _for_each_inner_i2c_master!((all(0, I2C0, I2cExt0, I2CEXT0_SCL, I2CEXT0_SDA)));
         _for_each_inner_spi_master!((SPI2)); _for_each_inner_spi_master!((SPI2, Spi2, FSPICLK[FSPICS0] [FSPID], true));
+        _for_each_inner_i2s!((I2S1)); _for_each_inner_i2s!((I2S1, I2s1, I2S1_MCLK, I2S1O_BCK, [I2S1O_SD], true));
     "#;
     const PAC: &str = "pub type GPIO = crate::Periph<gpio::RegisterBlock, 0x6000_4000>;\n\
         pub type I2C0 = crate::Periph<i2c0::RegisterBlock, 0x6001_3000>;\n\
-        pub type SPI2 = crate::Periph<spi2::RegisterBlock, 0x6002_4000>;\n";
+        pub type SPI2 = crate::Periph<spi2::RegisterBlock, 0x6002_4000>;\n\
+        pub type I2S1 = crate::Periph<i2s1::RegisterBlock, 0x6002_d000>;\n";
 
     #[test]
     fn parses_metadata_and_pac() {
@@ -182,6 +196,7 @@ mod tests {
         assert_eq!(info.octal_psram_pins, vec![3]);
         assert_eq!(info.i2c, vec!["I2C0"]);
         assert_eq!(info.spi, vec!["SPI2"]);
+        assert_eq!(info.i2s, vec!["I2S1"]);
         assert_eq!(pac_address(PAC, "I2C0"), Some(0x6001_3000));
         let dtsi = generate("esp32s3", &info, PAC, &[]).unwrap();
         assert!(dtsi.contains("i2c0: i2c@60013000"));

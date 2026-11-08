@@ -58,7 +58,7 @@ mod prelude {
     };
     pub use static_cell::StaticCell;
     pub use super::super::{
-        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
+        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
         Spare,
     };
 }
@@ -210,6 +210,26 @@ macro_rules! any_rtc {
     ($s:expr, $v:ident => $e:expr) => {
         match $s {
             $crate::p4v1::generated::AnyRtc::Rx8130($v) => $e,
+        }
+    };
+}
+
+/// Audio output of any board in this family (generated from the bindings).
+pub enum AnySpeaker {
+}
+
+impl AnySpeaker {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match *self {}
+    }
+}
+
+/// `any_speaker!(value, v => expr)`: `expr` for every variant of [`AnySpeaker`].
+#[allow(unused_macros)]
+macro_rules! any_speaker {
+    ($s:expr, $v:ident => $e:expr) => {
+        match *$s {
         }
     };
 }
@@ -469,6 +489,7 @@ pub mod tab5 {
             imu: imu,
             power: None,
             rtc: rtc,
+            speaker: None,
             buttons: buttons,
             spare,
         })

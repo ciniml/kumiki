@@ -93,6 +93,21 @@ pub trait Rtc {
     fn power_lost(&mut self) -> Result<bool, Self::Error>;
 }
 
+/// Audio output (speaker amplifier / codec), 16-bit stereo PCM.
+pub trait Speaker {
+    /// Error type.
+    type Error: core::fmt::Debug;
+    /// Output sample rate in Hz.
+    fn sample_rate(&self) -> u32;
+    /// Queue `frames` (left, right), blocking until all are queued.
+    fn play(&mut self, frames: &[[i16; 2]]) -> Result<(), Self::Error>;
+    /// Keep the output streaming silence while nothing is played; call
+    /// it regularly (every few tens of ms) between `play`s.
+    fn idle(&mut self) -> Result<(), Self::Error>;
+    /// Volume, 0 = mute, 255 = full.
+    fn set_volume(&mut self, level: u8) -> Result<(), Self::Error>;
+}
+
 /// A backlight that is only switched on and off by a GPIO.
 pub struct GpioBacklight<P>(pub P);
 

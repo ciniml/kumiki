@@ -44,6 +44,20 @@
     scl-gpios: { type: gpios }
     kumiki,bus-recovery: { type: boolean, description: "clock SCL to free a stuck target before use" }
 
+- compatible: "espressif,esp32-i2s"
+  kumiki:
+    controller: i2s
+    # The codec / amplifier on the link builds the I2S driver (format per device).
+    init: "()"
+  properties:
+    reg: { type: array }
+    kumiki,instance: { type: string, required: true }
+    mclk-gpios: { type: gpios }
+    bclk-gpios: { type: gpios }
+    ws-gpios: { type: gpios }
+    dout-gpios: { type: gpios }
+    din-gpios: { type: gpios }
+
 # ---- ESP32-P4 rev v1 (kumiki-p4v1-hal) ----------------------------------------
 - compatible: "espressif,esp32p4-gpio"
   properties:

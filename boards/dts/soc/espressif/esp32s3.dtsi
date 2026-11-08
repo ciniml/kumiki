@@ -66,5 +66,23 @@
 			kumiki,instance = "SPI3";
 			status = "disabled";
 		};
+
+		i2s0: i2s@6000f000 {
+			compatible = "espressif,esp32-i2s";
+			reg = <0x6000f000 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			kumiki,instance = "I2S0";
+			status = "disabled";
+		};
+
+		i2s1: i2s@6002d000 {
+			compatible = "espressif,esp32-i2s";
+			reg = <0x6002d000 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			kumiki,instance = "I2S1";
+			status = "disabled";
+		};
 	};
 };

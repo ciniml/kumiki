@@ -54,6 +54,7 @@ mod prelude {
         dma::DmaTxBuf,
         gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
         i2c::master::{Config as I2cConfig, I2c},
+        i2s::master::{Channels, DataFormat, I2s, TdmConfig},
         peripherals::Peripherals,
         spi::{Mode, master::{Config as SpiConfig, Spi}},
         time::Rate,
@@ -64,7 +65,7 @@ mod prelude {
     pub use kumiki_mpu6886::Mpu6886;
     pub use static_cell::StaticCell;
     pub use super::super::{
-        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
+        audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
         Spare,
     };
 }
@@ -249,6 +250,31 @@ macro_rules! any_rtc {
     };
 }
 
+/// Audio output of any board in this family (generated from the bindings).
+pub enum AnySpeaker {
+    /// `awinic,aw88298` (M5Stack CoreS3).
+    Aw88298(audio::Aw88298<SharedI2c>),
+}
+
+impl AnySpeaker {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match self {
+            AnySpeaker::Aw88298(_) => "AW88298",
+        }
+    }
+}
+
+/// `any_speaker!(value, v => expr)`: `expr` for every variant of [`AnySpeaker`].
+#[allow(unused_macros)]
+macro_rules! any_speaker {
+    ($s:expr, $v:ident => $e:expr) => {
+        match $s {
+            $crate::esp32s3::generated::AnySpeaker::Aw88298($v) => $e,
+        }
+    };
+}
+
 /// Boards of this family, in detection order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BoardId {
@@ -345,6 +371,9 @@ macro_rules! take_pins_cores3 {
             spi2_mosi: $p.GPIO37,
             spi2_cs: $p.GPIO3,
             lcd_dc: $p.GPIO35,
+            i2s1_bclk: $p.GPIO34,
+            i2s1_ws: $p.GPIO33,
+            i2s1_dout: $p.GPIO13,
         }
     };
 }
@@ -398,7 +427,7 @@ pub mod cores3 {
     /// Needs PSRAM (a frame buffer lives there).
     pub const NEEDS_PSRAM: bool = false;
     /// Device bring-up order (dependency graph of the device tree).
-    pub const INIT_ORDER: &[&str] = &["i2c0", "pmic", "ioexp", "touch", "imu", "rtc", "spi2", "lcd", "lcd_backlight", "buttons"];
+    pub const INIT_ORDER: &[&str] = &["i2c0", "pmic", "ioexp", "touch", "imu", "rtc", "spi2", "lcd", "i2s1", "speaker", "lcd_backlight", "buttons"];
 
     /// Chip GPIOs used by the board (see `take_pins_cores3!`).
     pub struct Pins {
@@ -408,6 +437,9 @@ pub mod cores3 {
         pub spi2_mosi: esp_hal::peripherals::GPIO37<'static>,
         pub spi2_cs: esp_hal::peripherals::GPIO3<'static>,
         pub lcd_dc: esp_hal::peripherals::GPIO35<'static>,
+        pub i2s1_bclk: esp_hal::peripherals::GPIO34<'static>,
+        pub i2s1_ws: esp_hal::peripherals::GPIO33<'static>,
+        pub i2s1_dout: esp_hal::peripherals::GPIO13<'static>,
     }
 
     /// `/soc/i2c@60013000` (espressif,esp32-i2c).
@@ -463,6 +495,16 @@ pub mod cores3 {
         pub const COMPATIBLE: &str = "belling,bm8563";
         pub const ADDR: u8 = 0x51;
     }
+    /// `/soc/i2c@60013000/amplifier@36` (awinic,aw88298).
+    pub mod speaker {
+        #[allow(unused_imports)]
+        use super::super::Gpio;
+        pub const COMPATIBLE: &str = "awinic,aw88298";
+        pub const I2S: &str = "i2s1";
+        /// output sample rate in Hz (default 48000)
+        pub const SAMPLE_RATE: Option<u32> = Some(48000);
+        pub const ADDR: u8 = 0x36;
+    }
     /// `/soc/spi@60024000` (espressif,esp32-spi).
     pub mod spi2 {
         #[allow(unused_imports)]
@@ -496,6 +538,18 @@ pub mod cores3 {
         pub const RESET_GPIOS: &[Gpio] = &[Gpio::Expander { controller: "ioexp", pin: 13, active_low: true }];
         pub const SPI_MAX_FREQUENCY: u32 = 40000000;
         pub const WIDTH: u32 = 320;
+    }
+    /// `/soc/i2s@6002d000` (espressif,esp32-i2s).
+    pub mod i2s1 {
+        #[allow(unused_imports)]
+        use super::super::Gpio;
+        pub const COMPATIBLE: &str = "espressif,esp32-i2s";
+        pub const BCLK_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 34, active_low: false }];
+        pub const DIN_GPIOS: &[Gpio] = &[];
+        pub const DOUT_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 13, active_low: false }];
+        pub const INSTANCE: &str = "I2S1";
+        pub const MCLK_GPIOS: &[Gpio] = &[];
+        pub const WS_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 33, active_low: false }];
     }
     /// `/backlight` (kumiki,regulator-backlight).
     pub mod lcd_backlight {
@@ -571,6 +625,21 @@ pub mod cores3 {
             DrawTarget::clear(&mut d, Rgb565::BLACK).map_err(|_| InitError::Display)?;
             AnyDisplay::Ili9342c(d)
         };
+        // /soc/i2s@6002d000 (espressif,esp32-i2s)
+        let i2s1 = ();
+        // /soc/i2c@60013000/amplifier@36 (awinic,aw88298)
+        let speaker = {
+            let rate = speaker::SAMPLE_RATE.unwrap_or(48_000);
+            let cfg = TdmConfig::new_tdm_philips()
+                .with_sample_rate(Rate::from_hz(rate))
+                .with_data_format(DataFormat::Data16Channel16)
+                .with_channels(Channels::STEREO);
+            let i2s = I2s::new(p.I2S1, p.DMA_CH1, cfg).map_err(|_| InitError::Config)?;
+            let tx = i2s.i2s_tx.with_bclk(pins.i2s1_bclk).with_ws(pins.i2s1_ws).with_dout(pins.i2s1_dout).build();
+            let buf = esp_hal::dma_tx_stream_buffer!(16_000, 4_000);
+            let out = audio::I2sOut::new(tx, buf, rate).ok_or(InitError::Config)?;
+            audio::Aw88298::new(RefCellDevice::new(i2c0), speaker::ADDR, out).ok().map(AnySpeaker::Aw88298)
+        };
         // /backlight (kumiki,regulator-backlight)
         let lcd_backlight = {
             let mut b = AnyBacklight::Axp2101(chips::Axp2101Backlight(RefCellDevice::new(i2c0)));
@@ -588,6 +657,7 @@ pub mod cores3 {
             imu: imu,
             power: Some(pmic),
             rtc: rtc,
+            speaker: speaker,
             buttons: buttons,
             spare,
         })
@@ -749,6 +819,7 @@ pub mod atoms3 {
             imu: imu,
             power: None,
             rtc: None,
+            speaker: None,
             buttons: buttons,
             spare,
         })
@@ -991,6 +1062,7 @@ pub mod stopwatch {
             imu: imu,
             power: None,
             rtc: None,
+            speaker: None,
             buttons: buttons,
             spare,
         })
