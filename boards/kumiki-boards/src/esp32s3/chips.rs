@@ -143,6 +143,24 @@ pub struct Cst820<I> {
     pub i2c: I,
     /// Raw-to-pixel scale (StopWatch reports 0..233 for a 466 px panel).
     pub scale: i16,
+    /// Lazily applied configuration done (see `ensure_init`).
+    pub inited: bool,
+}
+
+impl<I: I2c> Cst820<I> {
+    /// Like M5GFX `Touch_CST816S::_check_init`: the chip may NAK while in
+    /// low-power mode, so configure it on the first successful access.
+    fn ensure_init(&mut self) {
+        if self.inited {
+            return;
+        }
+        let mut id = [0u8; 3];
+        if self.i2c.write(CST820_ADDR, &[0x00, 0x00]).is_ok() && self.i2c.write_read(CST820_ADDR, &[0xA7], &mut id).is_ok() {
+            let _ = self.i2c.write(CST820_ADDR, &[0xFA, 0x20]); // INT pulse on change
+            let _ = self.i2c.write(CST820_ADDR, &[0xED, 20]); // INT pulse width 2 ms
+            self.inited = true;
+        }
+    }
 }
 
 /// CST820 7-bit address.
@@ -151,6 +169,7 @@ pub const CST820_ADDR: u8 = 0x15;
 impl<I: I2c> kumiki_class::Touch for Cst820<I> {
     type Error = I::Error;
     fn read(&mut self, out: &mut [TouchPoint]) -> Result<usize, I::Error> {
+        self.ensure_init();
         let mut b = [0u8; 5];
         self.i2c.write_read(CST820_ADDR, &[0x02], &mut b)?;
         if b[0] & 0x0F == 0 || out.is_empty() {

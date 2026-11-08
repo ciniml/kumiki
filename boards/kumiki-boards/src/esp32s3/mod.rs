@@ -341,7 +341,7 @@ fn init_stopwatch(mut p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Resul
     for _ in 0..8 {
         let mut dev = RefCellDevice::new(bus);
         if embedded_hal::i2c::I2c::write(&mut dev, chips::CST820_ADDR, &[0x00]).is_ok() {
-            touch = Some(AnyTouch::Cst820(chips::Cst820 { i2c: RefCellDevice::new(bus), scale: 2 }));
+            touch = Some(AnyTouch::Cst820(chips::Cst820 { i2c: RefCellDevice::new(bus), scale: 2, inited: false }));
             break;
         }
         if embedded_hal::i2c::I2c::write(&mut dev, chips::CST9217_ADDR, &[0xD0, 0x00]).is_ok() {
