@@ -1,5 +1,6 @@
-//! USB Serial/JTAG console (usb_serial_jtag_reg.h). Works straight after
-//! the bootloader without any set-up.
+//! USB Serial/JTAG output (usb_serial_jtag_reg.h). Works straight after
+//! the bootloader without any set-up. The default [`console`](crate::console)
+//! sink with feature `usj-console`.
 
 use crate::{rd, time, wr};
 
@@ -35,32 +36,4 @@ pub fn write(bytes: &[u8]) {
         unsafe { wr(USJ_EP1, b as u32) };
     }
     unsafe { wr(USJ_EP1_CONF, USJ_WR_DONE) };
-}
-
-/// `core::fmt::Write` sink for the console.
-pub struct Console;
-
-impl core::fmt::Write for Console {
-    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        write(s.as_bytes());
-        Ok(())
-    }
-}
-
-/// Prints to the USB Serial/JTAG console.
-#[macro_export]
-macro_rules! print {
-    ($($arg:tt)*) => {{
-        let _ = core::fmt::Write::write_fmt(&mut $crate::usj::Console, format_args!($($arg)*));
-    }};
-}
-
-/// Prints a line to the USB Serial/JTAG console.
-#[macro_export]
-macro_rules! println {
-    () => { $crate::print!("\r\n") };
-    ($($arg:tt)*) => {{
-        $crate::print!($($arg)*);
-        $crate::print!("\r\n");
-    }};
 }

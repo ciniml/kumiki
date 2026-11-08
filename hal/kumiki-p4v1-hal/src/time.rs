@@ -15,7 +15,9 @@ const SYSTIMER_UNIT0_VALUE_LO: usize = SYSTIMER_BASE + 0x44;
 /// SYSTIMER ticks per microsecond.
 pub const TICKS_PER_US: u64 = 16;
 
-pub(crate) fn init() {
+/// Makes sure the SYSTIMER counts (its clock is on from reset; `rt` calls
+/// this before `main`). Call it once when not using `rt`.
+pub fn init() {
     set_bits(SYSTIMER_CONF, SYSTIMER_CLK_EN);
 }
 

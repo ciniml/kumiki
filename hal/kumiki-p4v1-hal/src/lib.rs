@@ -7,10 +7,22 @@
 //! author, MIT OR Apache-2.0), where it runs on a real Tab5.
 //!
 //! Scope: only what kumiki's Tab5 board definition needs. Blocking,
-//! single-core, polled.
+//! single-core, polled; long hardware operations (PPA) also come as
+//! start / poll / wait, so an OS can finish them from its interrupt handler.
 //!
-//! - [`rt`]: entry point, app descriptor, linker script, fatal trap report
-//! - [`usj`]: USB Serial/JTAG console ([`println!`])
+//! The HAL does nothing behind the program's back: no global initialisation
+//! besides what `rt` does before `main`, peripherals are taken once
+//! ([`take`]) and handed to drivers, and console output goes where the
+//! program says ([`console::set_sink`]).
+//!
+//! Features: `rt` (default; leave it out inside an OS kernel with its own
+//! entry and descriptor), `usj-console` (default console sink), `log`
+//! (bring-up messages), `gfx` ([`fb::DsiPanel`] for kumiki-gfx).
+//!
+//! - `rt`: entry point, app descriptor, linker script, fatal trap report
+//! - [`console`]: [`println!`] and its sink
+//! - [`usj`]: USB Serial/JTAG output
+//! - [`wdt`]: the watchdogs
 //! - [`time`]: SYSTIMER clock and [`time::Delay`]
 //! - [`gpio`]: pins and embedded-hal digital traits
 //! - [`i2c`]: I²C master with embedded-hal's `I2c`
@@ -26,6 +38,7 @@
 
 pub mod cache;
 pub mod clock;
+pub mod console;
 pub mod dsi;
 #[cfg(feature = "gfx")]
 pub mod fb;
@@ -33,10 +46,11 @@ pub mod gpio;
 pub mod i2c;
 pub mod ppa;
 pub mod psram;
+#[cfg(feature = "rt")]
 pub mod rt;
 pub mod time;
 pub mod usj;
-mod wdt;
+pub mod wdt;
 
 /// Logs a line from inside the HAL (`[module] ...`), with the `log`
 /// feature.

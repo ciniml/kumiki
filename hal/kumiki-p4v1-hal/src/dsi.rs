@@ -702,7 +702,9 @@ impl Dsi {
 
     /// Marks the used list items valid again and restarts the DMA if it
     /// stopped at an invalid item anyway. Counts frames and underruns.
-    /// Call it from the main loop at least every ~200 ms.
+    /// Call it from the main loop at least every ~200 ms, or from the
+    /// DW-GDMA channel interrupt handler (it only reads and clears the
+    /// channel status; routing the interrupt is the caller's business).
     pub fn service(&mut self) {
         let st = unsafe { rd(CH_INTSTATUS0) };
         if st == 0 {

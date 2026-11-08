@@ -18,7 +18,7 @@ const TIMG_WDT_CONF_UPDATE_EN: u32 = 1 << 22;
 
 /// Turns off the RTC watchdog and both timer-group watchdogs. (The super
 /// watchdog is fed automatically; the bootloader sets its auto-feed.)
-pub(crate) fn disable_all() {
+pub fn disable_all() {
     unsafe {
         wr(LP_WDT_WPROTECT, WDT_WKEY);
         wr(LP_WDT_CONFIG0, 0);

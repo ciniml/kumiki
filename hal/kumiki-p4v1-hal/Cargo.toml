@@ -9,7 +9,16 @@ repository = "https://github.com/ciniml/kumiki"
 rust-version = "1.88"
 
 [features]
-default = ["log"]
+default = ["rt", "usj-console", "log"]
+## The runtime for a bare-metal application: `_start`, the trap vector, the
+## ESP-IDF app descriptor, `entry!`, and turning the watchdogs off before
+## `main`. Leave it out when the HAL is linked into an OS kernel that has its
+## own (call `time::init()` yourself then).
+rt = []
+## The console (`println!`, the HAL's `log!` lines) starts out on USB
+## Serial/JTAG. Without it the console discards everything until
+## `console::set_sink` is called.
+usj-console = []
 ## Progress and diagnostic lines from the HAL's bring-up code on the console.
 log = []
 ## `fb::DsiPanel`: the DSI output as a kumiki-gfx `FramebufferPanel`.
