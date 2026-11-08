@@ -27,7 +27,7 @@ use embedded_graphics::{
     text::Text,
 };
 use kumiki_boards::Devices;
-use kumiki_class::{Backlight, ButtonKind, Buttons, Imu, Power, Rtc, Speaker, Touch, TouchPoint};
+use kumiki_class::{Backlight, ButtonKind, Buttons, Imu, Microphone, Power, Rtc, Speaker, Touch, TouchPoint};
 use kumiki_gfx::{FastDraw, Rgb565Be, Sprite, Viewport};
 
 use crate::platform::{delay_ms, now_ms};
@@ -116,17 +116,22 @@ fn beep<S: Speaker>(s: &mut S, hz: u32, ms: u32) {
 
 /// Runs the demo on the brought-up board; never returns.
 pub fn run(dev: Devices) -> ! {
-    let Devices { board, mut display, mut backlight, mut touch, mut imu, mut power, mut rtc, mut speaker, mut buttons, .. } =
-        dev;
+    let Devices {
+        board, mut display, mut backlight, mut touch, mut imu, mut power, mut rtc, mut speaker, mut microphone, mut buttons, ..
+    } = dev;
     println!(
-        "kumiki-demo: detected {} (touch: {}, imu: {}, power: {}, rtc: {}, speaker: {})",
+        "kumiki-demo: detected {} (touch: {}, imu: {}, power: {}, rtc: {}, speaker: {}, mic: {})",
         board.name(),
         touch.as_ref().map(|t| t.name()).unwrap_or("none"),
         imu.is_some(),
         power.is_some(),
         rtc.as_ref().map(|r| r.name()).unwrap_or("none"),
-        speaker.as_ref().map(|s| s.name()).unwrap_or("none")
+        speaker.as_ref().map(|s| s.name()).unwrap_or("none"),
+        microphone.as_ref().map(|m| m.name()).unwrap_or("none")
     );
+    // Microphone level: peak |sample| per channel since the last report.
+    let (mut mic_peak, mut mic_frames, mut mic_shown) = ([0i32; 2], 0u32, [0i32; 2]);
+    let (mut mic_sq, mut mic_t0) = ([0u64; 2], now_ms());
     if let Some(s) = speaker.as_mut() {
         s.set_volume(96).ok();
         beep(s, 660, 80);
@@ -171,6 +176,50 @@ pub fn run(dev: Devices) -> ! {
                 beep(s, 880 + 110 * page as u32, 40);
             }
             s.idle().ok();
+        }
+        if let Some(m) = microphone.as_mut() {
+            let mut buf = [[0i16; 2]; 256];
+            while let Ok(n) = m.read(&mut buf) {
+                if n == 0 {
+                    break;
+                }
+                for f in &buf[..n] {
+                    mic_peak[0] = mic_peak[0].max((f[0] as i32).abs());
+                    mic_peak[1] = mic_peak[1].max((f[1] as i32).abs());
+                    mic_sq[0] += (f[0] as i64 * f[0] as i64) as u64;
+                    mic_sq[1] += (f[1] as i64 * f[1] as i64) as u64;
+                }
+                mic_frames += n as u32;
+            }
+            if frame % 10 == 0 {
+                mic_shown = mic_peak;
+                if frame % 120 == 0 {
+                    let ms = (now_ms() - mic_t0).max(1);
+                    let rms = |s: u64| {
+                        let m = s / mic_frames.max(1) as u64;
+                        // Integer square root.
+                        let mut r = 0u64;
+                        while (r + 1) * (r + 1) <= m {
+                            r += 1;
+                        }
+                        r
+                    };
+                    println!(
+                        "mic: {} frames in {} ms ({} Hz), peak L {} R {}, rms L {} R {}",
+                        mic_frames,
+                        ms,
+                        mic_frames as u64 * 1000 / ms,
+                        mic_peak[0],
+                        mic_peak[1],
+                        rms(mic_sq[0]),
+                        rms(mic_sq[1])
+                    );
+                    mic_frames = 0;
+                    mic_sq = [0; 2];
+                    mic_t0 = now_ms();
+                }
+                mic_peak = [0; 2];
+            }
         }
 
         let size = display.size();
@@ -244,6 +293,20 @@ pub fn run(dev: Devices) -> ! {
                             text(&mut v, "no IMU driver", 1, Rgb565::new(31, 20, 0));
                         }
                     }
+                }
+                if microphone.is_some() && frame % 10 == 0 {
+                    // Level meter: peak of both channels, full scale = 32768.
+                    let mut l = Line::<32>::new();
+                    let _ = write!(l, "mic {:5} {:5}", mic_shown[0], mic_shown[1]);
+                    text(&mut v, l.as_str(), 5, Rgb565::new(31, 40, 31));
+                    let font_h = font_for(&v).character_size.height as i32;
+                    let w = v.size().width as i32 - 4;
+                    let y = 6 * font_h + 4;
+                    let peak = mic_shown[0].max(mic_shown[1]);
+                    let lit = (w * peak / 32768).clamp(0, w);
+                    v.fill_rect(&Rectangle::new(Point::new(2, y), Size::new(lit as u32, 8)), Rgb565::GREEN).ok();
+                    v.fill_rect(&Rectangle::new(Point::new(2 + lit, y), Size::new((w - lit) as u32, 8)), Rgb565::new(4, 8, 4))
+                        .ok();
                 }
             }
             3 => {

@@ -65,7 +65,8 @@ mod prelude {
     pub use kumiki_mpu6886::Mpu6886;
     pub use static_cell::StaticCell;
     pub use super::super::{
-        audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
+        audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs,
+        Devices, I2cBus, InitError,
         Spare,
     };
 }
@@ -275,6 +276,31 @@ macro_rules! any_speaker {
     };
 }
 
+/// Audio input of any board in this family (generated from the bindings).
+pub enum AnyMicrophone {
+    /// `everest,es7210` (M5Stack CoreS3).
+    Es7210(audio::Es7210<SharedI2c>),
+}
+
+impl AnyMicrophone {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match self {
+            AnyMicrophone::Es7210(_) => "ES7210",
+        }
+    }
+}
+
+/// `any_microphone!(value, v => expr)`: `expr` for every variant of [`AnyMicrophone`].
+#[allow(unused_macros)]
+macro_rules! any_microphone {
+    ($s:expr, $v:ident => $e:expr) => {
+        match $s {
+            $crate::esp32s3::generated::AnyMicrophone::Es7210($v) => $e,
+        }
+    };
+}
+
 /// Boards of this family, in detection order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BoardId {
@@ -371,9 +397,11 @@ macro_rules! take_pins_cores3 {
             spi2_mosi: $p.GPIO37,
             spi2_cs: $p.GPIO3,
             lcd_dc: $p.GPIO35,
+            i2s1_mclk: $p.GPIO0,
             i2s1_bclk: $p.GPIO34,
             i2s1_ws: $p.GPIO33,
             i2s1_dout: $p.GPIO13,
+            i2s1_din: $p.GPIO14,
         }
     };
 }
@@ -427,7 +455,7 @@ pub mod cores3 {
     /// Needs PSRAM (a frame buffer lives there).
     pub const NEEDS_PSRAM: bool = false;
     /// Device bring-up order (dependency graph of the device tree).
-    pub const INIT_ORDER: &[&str] = &["i2c0", "pmic", "ioexp", "touch", "imu", "rtc", "spi2", "lcd", "i2s1", "speaker", "lcd_backlight", "buttons"];
+    pub const INIT_ORDER: &[&str] = &["i2c0", "pmic", "ioexp", "touch", "imu", "rtc", "spi2", "lcd", "i2s1", "speaker", "microphone", "lcd_backlight", "buttons"];
 
     /// Chip GPIOs used by the board (see `take_pins_cores3!`).
     pub struct Pins {
@@ -437,9 +465,11 @@ pub mod cores3 {
         pub spi2_mosi: esp_hal::peripherals::GPIO37<'static>,
         pub spi2_cs: esp_hal::peripherals::GPIO3<'static>,
         pub lcd_dc: esp_hal::peripherals::GPIO35<'static>,
+        pub i2s1_mclk: esp_hal::peripherals::GPIO0<'static>,
         pub i2s1_bclk: esp_hal::peripherals::GPIO34<'static>,
         pub i2s1_ws: esp_hal::peripherals::GPIO33<'static>,
         pub i2s1_dout: esp_hal::peripherals::GPIO13<'static>,
+        pub i2s1_din: esp_hal::peripherals::GPIO14<'static>,
     }
 
     /// `/soc/i2c@60013000` (espressif,esp32-i2c).
@@ -501,9 +531,15 @@ pub mod cores3 {
         use super::super::Gpio;
         pub const COMPATIBLE: &str = "awinic,aw88298";
         pub const I2S: &str = "i2s1";
-        /// output sample rate in Hz (default 48000)
-        pub const SAMPLE_RATE: Option<u32> = Some(48000);
         pub const ADDR: u8 = 0x36;
+    }
+    /// `/soc/i2c@60013000/adc@40` (everest,es7210).
+    pub mod microphone {
+        #[allow(unused_imports)]
+        use super::super::Gpio;
+        pub const COMPATIBLE: &str = "everest,es7210";
+        pub const I2S: &str = "i2s1";
+        pub const ADDR: u8 = 0x40;
     }
     /// `/soc/spi@60024000` (espressif,esp32-spi).
     pub mod spi2 {
@@ -545,10 +581,12 @@ pub mod cores3 {
         use super::super::Gpio;
         pub const COMPATIBLE: &str = "espressif,esp32-i2s";
         pub const BCLK_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 34, active_low: false }];
-        pub const DIN_GPIOS: &[Gpio] = &[];
+        pub const DIN_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 14, active_low: false }];
         pub const DOUT_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 13, active_low: false }];
         pub const INSTANCE: &str = "I2S1";
-        pub const MCLK_GPIOS: &[Gpio] = &[];
+        /// sample rate in Hz for both directions (default 48000)
+        pub const SAMPLE_RATE: Option<u32> = Some(48000);
+        pub const MCLK_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 0, active_low: false }];
         pub const WS_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 33, active_low: false }];
     }
     /// `/backlight` (kumiki,regulator-backlight).
@@ -575,7 +613,7 @@ pub mod cores3 {
         let spare = take_spare!(p);
         let mut delay = Delay::new();
         // /soc/i2c@60013000 (espressif,esp32-i2c)
-        let i2c0 = {
+        let mut i2c0 = {
             if i2c0::BUS_RECOVERY {
                 probe::i2c_bus_recover(pins.i2c0_scl.reborrow(), pins.i2c0_sda.reborrow());
             }
@@ -587,29 +625,29 @@ pub mod cores3 {
             &*CELL.init(RefCell::new(i2c))
         };
         // /soc/i2c@60013000/pmic@34 (x-powers,axp2101)
-        let pmic = {
+        let mut pmic = {
             chips::axp2101_init(&mut RefCellDevice::new(i2c0), pmic::ADDR, &[(chips::AxpLdo::Aldo1, 1800), (chips::AxpLdo::Aldo2, 3300), (chips::AxpLdo::Aldo3, 3300), (chips::AxpLdo::Aldo4, 3300), (chips::AxpLdo::Bldo1, 0), (chips::AxpLdo::Bldo2, 0)]).map_err(InitError::I2c)?;
             delay.delay_millis(10);
             AnyPower::Axp2101(chips::Axp2101Power(RefCellDevice::new(i2c0)))
         };
         // /soc/i2c@60013000/gpio@58 (awinic,aw9523b)
-        let ioexp = chips::aw9523_init(&mut RefCellDevice::new(i2c0), ioexp::ADDR, ioexp::P0_PUSH_PULL, &[(0, chips::LineInit::OutputHigh), (1, chips::LineInit::OutputHigh), (2, chips::LineInit::OutputHigh), (5, chips::LineInit::OutputLow), (6, chips::LineInit::OutputLow), (7, chips::LineInit::OutputLow), (8, chips::LineInit::OutputHigh), (9, chips::LineInit::OutputHigh), (12, chips::LineInit::OutputLow), (13, chips::LineInit::OutputHigh), (14, chips::LineInit::OutputLow), (15, chips::LineInit::OutputLow)]).map_err(InitError::I2c)?;
+        let mut ioexp = chips::aw9523_init(&mut RefCellDevice::new(i2c0), ioexp::ADDR, ioexp::P0_PUSH_PULL, &[(0, chips::LineInit::OutputHigh), (1, chips::LineInit::OutputHigh), (2, chips::LineInit::OutputHigh), (5, chips::LineInit::OutputLow), (6, chips::LineInit::OutputLow), (7, chips::LineInit::OutputLow), (8, chips::LineInit::OutputHigh), (9, chips::LineInit::OutputHigh), (12, chips::LineInit::OutputLow), (13, chips::LineInit::OutputHigh), (14, chips::LineInit::OutputLow), (15, chips::LineInit::OutputLow)]).map_err(InitError::I2c)?;
         // /soc/i2c@60013000/touchscreen@38 (focaltech,ft6336u)
-        let touch = AnyTouch::Ft6336(chips::Ft6336 { i2c: RefCellDevice::new(i2c0) });
+        let mut touch = AnyTouch::Ft6336(chips::Ft6336 { i2c: RefCellDevice::new(i2c0) });
         // /soc/i2c@60013000/imu@69 (bosch,bmi270)
-        let imu = {
+        let mut imu = {
             let mut m = kumiki_bmi270::Bmi270::new(RefCellDevice::new(i2c0), imu::ADDR);
             m.init(&mut delay).ok().map(|_| AnyImu::Bmi270(m))
         };
         // /soc/i2c@60013000/rtc@51 (belling,bm8563)
-        let rtc = {
+        let mut rtc = {
             let mut r = kumiki_rtc::Pcf8563::new(RefCellDevice::new(i2c0), rtc::ADDR);
             r.init().ok().map(|_| AnyRtc::Pcf8563(r))
         };
         // /soc/spi@60024000 (espressif,esp32-spi)
-        let spi2 = ();
+        let mut spi2 = ();
         // /soc/spi@60024000/display@0 (ilitek,ili9342c)
-        let lcd = {
+        let mut lcd = {
             bind::reset_pulse(&mut chips::Aw9523Pin { i2c: RefCellDevice::new(i2c0), addr: ioexp::ADDR, line: 13 }, &mut delay);
             let spi = Spi::new(p.SPI2, SpiConfig::default().with_frequency(Rate::from_hz(lcd::SPI_MAX_FREQUENCY)).with_mode(Mode::_0))
                 .map_err(|_| InitError::Config)?
@@ -626,29 +664,43 @@ pub mod cores3 {
             AnyDisplay::Ili9342c(d)
         };
         // /soc/i2s@6002d000 (espressif,esp32-i2s)
-        let i2s1 = ();
-        // /soc/i2c@60013000/amplifier@36 (awinic,aw88298)
-        let speaker = {
-            let rate = speaker::SAMPLE_RATE.unwrap_or(48_000);
+        let mut i2s1 = {
+            let rate = i2s1::SAMPLE_RATE.unwrap_or(48_000);
             let cfg = TdmConfig::new_tdm_philips()
                 .with_sample_rate(Rate::from_hz(rate))
                 .with_data_format(DataFormat::Data16Channel16)
-                .with_channels(Channels::STEREO);
-            let i2s = I2s::new(p.I2S1, p.DMA_CH1, cfg).map_err(|_| InitError::Config)?;
+                .with_channels(Channels::STEREO)
+                .with_signal_loopback(true);
+            let i2s = I2s::new(p.I2S1, p.DMA_CH1, cfg).map_err(|_| InitError::Config)?.with_mclk(pins.i2s1_mclk);
             let tx = i2s.i2s_tx.with_bclk(pins.i2s1_bclk).with_ws(pins.i2s1_ws).with_dout(pins.i2s1_dout).build();
+            let rx = i2s.i2s_rx.with_din(pins.i2s1_din).build();
+            audio::I2sPorts { rate, tx: Some(tx), rx: Some(rx) }
+        };
+        // /soc/i2c@60013000/amplifier@36 (awinic,aw88298)
+        let mut speaker = {
+            let tx = i2s1.tx.take().ok_or(InitError::Config)?;
             let buf = esp_hal::dma_tx_stream_buffer!(16_000, 4_000);
-            let out = audio::I2sOut::new(tx, buf, rate).ok_or(InitError::Config)?;
+            let out = audio::I2sOut::new(tx, buf, i2s1.rate).ok_or(InitError::Config)?;
             audio::Aw88298::new(RefCellDevice::new(i2c0), speaker::ADDR, out).ok().map(AnySpeaker::Aw88298)
         };
+        // /soc/i2c@60013000/adc@40 (everest,es7210)
+        let mut microphone = {
+            let rx = i2s1.rx.take().ok_or(InitError::Config)?;
+            // Many small descriptors: consumed ones are relinked at the tail, and the
+            // DMA reads ahead, so a few would leave it no room (it stops when full).
+            let buf = esp_hal::dma_rx_stream_buffer!(16_000, 1_000);
+            let input = audio::I2sIn::new(rx, buf, i2s1.rate).ok_or(InitError::Config)?;
+            audio::Es7210::new(RefCellDevice::new(i2c0), microphone::ADDR, input).ok().map(AnyMicrophone::Es7210)
+        };
         // /backlight (kumiki,regulator-backlight)
-        let lcd_backlight = {
+        let mut lcd_backlight = {
             let mut b = AnyBacklight::Axp2101(chips::Axp2101Backlight(RefCellDevice::new(i2c0)));
             kumiki_class::Backlight::set_brightness(&mut b, lcd_backlight::DEFAULT_BRIGHTNESS.unwrap_or(160).min(255) as u8)
                 .map_err(|_| InitError::Display)?;
             b
         };
         // /buttons (kumiki,touch-keys)
-        let buttons = ButtonInputs::TouchAsA;
+        let mut buttons = ButtonInputs::TouchAsA;
         Ok(Devices {
             board: super::BoardId::M5StackCoreS3,
             display: lcd,
@@ -658,6 +710,7 @@ pub mod cores3 {
             power: Some(pmic),
             rtc: rtc,
             speaker: speaker,
+            microphone: microphone,
             buttons: buttons,
             spare,
         })
@@ -772,7 +825,7 @@ pub mod atoms3 {
         let spare = take_spare!(p);
         let mut delay = Delay::new();
         // /soc/i2c@60027000 (espressif,esp32-i2c)
-        let i2c1 = {
+        let mut i2c1 = {
             if i2c1::BUS_RECOVERY {
                 probe::i2c_bus_recover(pins.i2c1_scl.reborrow(), pins.i2c1_sda.reborrow());
             }
@@ -784,14 +837,14 @@ pub mod atoms3 {
             &*CELL.init(RefCell::new(i2c))
         };
         // /soc/i2c@60027000/imu@68 (tdk,mpu6886)
-        let imu = {
+        let mut imu = {
             let mut m = Mpu6886::new(RefCellDevice::new(i2c1), imu::ADDR);
             m.init(&mut delay).ok().map(|_| AnyImu::Mpu6886(m))
         };
         // /soc/spi@60024000 (espressif,esp32-spi)
-        let spi2 = ();
+        let mut spi2 = ();
         // /soc/spi@60024000/display@0 (galaxycore,gc9107)
-        let lcd = {
+        let mut lcd = {
             { let mut rst = Output::new(pins.lcd_reset, Level::High, OutputConfig::default()); bind::reset_pulse(&mut rst, &mut delay); core::mem::forget(rst); }
             let spi = Spi::new(p.SPI2, SpiConfig::default().with_frequency(Rate::from_hz(lcd::SPI_MAX_FREQUENCY)).with_mode(Mode::_0))
                 .map_err(|_| InitError::Config)?
@@ -808,9 +861,9 @@ pub mod atoms3 {
             AnyDisplay::Gc9107(d)
         };
         // /backlight (gpio-backlight)
-        let lcd_backlight = AnyBacklight::Gpio(kumiki_class::GpioBacklight(Output::new(pins.lcd_backlight, Level::High, OutputConfig::default())));
+        let mut lcd_backlight = AnyBacklight::Gpio(kumiki_class::GpioBacklight(Output::new(pins.lcd_backlight, Level::High, OutputConfig::default())));
         // /buttons (gpio-keys)
-        let buttons = ButtonInputs::Gpio { a: Input::new(pins.buttons_button_a, InputConfig::default().with_pull(Pull::Up)), b: None };
+        let mut buttons = ButtonInputs::Gpio { a: Input::new(pins.buttons_button_a, InputConfig::default().with_pull(Pull::Up)), b: None };
         Ok(Devices {
             board: super::BoardId::M5StackAtomS3,
             display: lcd,
@@ -820,6 +873,7 @@ pub mod atoms3 {
             power: None,
             rtc: None,
             speaker: None,
+            microphone: None,
             buttons: buttons,
             spare,
         })
@@ -985,7 +1039,7 @@ pub mod stopwatch {
         let spare = take_spare!(p);
         let mut delay = Delay::new();
         // /soc/i2c@60027000 (espressif,esp32-i2c)
-        let i2c1 = {
+        let mut i2c1 = {
             if i2c1::BUS_RECOVERY {
                 probe::i2c_bus_recover(pins.i2c1_scl.reborrow(), pins.i2c1_sda.reborrow());
             }
@@ -997,15 +1051,15 @@ pub mod stopwatch {
             &*CELL.init(RefCell::new(i2c))
         };
         // /soc/i2c@60027000/pmic@6e (m5stack,m5pm1)
-        let pm1 = ();
+        let mut pm1 = ();
         // /soc/i2c@60027000/gpio@4f (m5stack,m5ioe1)
-        let ioe1 = ();
+        let mut ioe1 = ();
         // /soc/spi@60024000 (espressif,esp32-spi)
-        let spi2 = ();
+        let mut spi2 = ();
         // /buttons (gpio-keys)
-        let buttons = ButtonInputs::Gpio { a: Input::new(pins.buttons_button_a, InputConfig::default().with_pull(Pull::Up)), b: Some(Input::new(pins.buttons_button_b, InputConfig::default().with_pull(Pull::Up))) };
+        let mut buttons = ButtonInputs::Gpio { a: Input::new(pins.buttons_button_a, InputConfig::default().with_pull(Pull::Up)), b: Some(Input::new(pins.buttons_button_b, InputConfig::default().with_pull(Pull::Up))) };
         // /power-sequence (m5stack,stopwatch-power-sequence)
-        let power_seq = {
+        let mut power_seq = {
             let _cs = Output::new(pins.spi2_cs.reborrow(), Level::High, OutputConfig::default());
             chips::stopwatch_power_on(&mut RefCellDevice::new(i2c1), &mut delay).map_err(InitError::I2c)?;
         };
@@ -1026,12 +1080,12 @@ pub mod stopwatch {
             found
         };
         // /soc/i2c@60027000/imu@68 (bosch,bmi270)
-        let imu = {
+        let mut imu = {
             let mut m = kumiki_bmi270::Bmi270::new(RefCellDevice::new(i2c1), imu::ADDR);
             m.init(&mut delay).ok().map(|_| AnyImu::Bmi270(m))
         };
         // /soc/spi@60024000/display@0 (chipone,co5300)
-        let lcd = {
+        let mut lcd = {
             let (w, h) = (lcd::WIDTH, lcd::HEIGHT);
             let fb = bind::psram_frame_buffer(p.PSRAM, w as usize * h as usize * 2).ok_or(InitError::Config)?;
             let spi = Spi::new(p.SPI2, SpiConfig::default().with_frequency(Rate::from_hz(lcd::SPI_MAX_FREQUENCY)).with_mode(Mode::_0))
@@ -1053,7 +1107,7 @@ pub mod stopwatch {
             AnyDisplay::Co5300(d)
         };
         // /backlight (kumiki,dcs-backlight)
-        let lcd_backlight = AnyBacklight::None;
+        let mut lcd_backlight = AnyBacklight::None;
         Ok(Devices {
             board: super::BoardId::M5StackStopWatch,
             display: lcd,
@@ -1063,6 +1117,7 @@ pub mod stopwatch {
             power: None,
             rtc: None,
             speaker: None,
+            microphone: None,
             buttons: buttons,
             spare,
         })

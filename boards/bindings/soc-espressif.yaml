@@ -47,8 +47,22 @@
 - compatible: "espressif,esp32-i2s"
   kumiki:
     controller: i2s
-    # The codec / amplifier on the link builds the I2S driver (format per device).
-    init: "()"
+    # Full duplex, 16-bit stereo Philips I2S, master: TX drives MCLK / BCK / WS,
+    # RX shares them (signal loopback). DMA channel 1 (channel 0 belongs to the
+    # display bus). The devices on it take `tx` / `rx` (`${var:i2s}`).
+    init: |
+      {
+          let rate = ${const:SAMPLE_RATE}.unwrap_or(48_000);
+          let cfg = TdmConfig::new_tdm_philips()
+              .with_sample_rate(Rate::from_hz(rate))
+              .with_data_format(DataFormat::Data16Channel16)
+              .with_channels(Channels::STEREO)
+              .with_signal_loopback(true);
+          let i2s = I2s::new(${instance}, p.DMA_CH1, cfg).map_err(|_| InitError::Config)?.with_mclk(${pin:mclk-gpios});
+          let tx = i2s.i2s_tx.with_bclk(${pin:bclk-gpios}).with_ws(${pin:ws-gpios}).with_dout(${pin:dout-gpios}).build();
+          let rx = i2s.i2s_rx.with_din(${pin:din-gpios}).build();
+          audio::I2sPorts { rate, tx: Some(tx), rx: Some(rx) }
+      }
   properties:
     reg: { type: array }
     kumiki,instance: { type: string, required: true }
@@ -57,6 +71,7 @@
     ws-gpios: { type: gpios }
     dout-gpios: { type: gpios }
     din-gpios: { type: gpios }
+    kumiki,sample-rate: { type: int, description: "sample rate in Hz for both directions (default 48000)" }
 
 # ---- ESP32-P4 rev v1 (kumiki-p4v1-hal) ----------------------------------------
 - compatible: "espressif,esp32p4-gpio"

@@ -58,7 +58,8 @@ mod prelude {
     };
     pub use static_cell::StaticCell;
     pub use super::super::{
-        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
+        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs, Devices,
+        I2cBus, InitError,
         Spare,
     };
 }
@@ -228,6 +229,26 @@ impl AnySpeaker {
 /// `any_speaker!(value, v => expr)`: `expr` for every variant of [`AnySpeaker`].
 #[allow(unused_macros)]
 macro_rules! any_speaker {
+    ($s:expr, $v:ident => $e:expr) => {
+        match *$s {
+        }
+    };
+}
+
+/// Audio input of any board in this family (generated from the bindings).
+pub enum AnyMicrophone {
+}
+
+impl AnyMicrophone {
+    /// Device part number (from the compatible).
+    pub fn name(&self) -> &'static str {
+        match *self {}
+    }
+}
+
+/// `any_microphone!(value, v => expr)`: `expr` for every variant of [`AnyMicrophone`].
+#[allow(unused_macros)]
+macro_rules! any_microphone {
     ($s:expr, $v:ident => $e:expr) => {
         match *$s {
         }
@@ -432,29 +453,29 @@ pub mod tab5 {
         let spare = take_spare!(p);
         let mut delay = Delay;
         // /soc/i2c@500c5000 (espressif,esp32p4-i2c)
-        let i2c1 = {
+        let mut i2c1 = {
             static CELL: StaticCell<RefCell<I2cBus>> = StaticCell::new();
             let i2c = I2c::new(p.i2c1, pins.i2c1_sda, pins.i2c1_scl, bind::hz(i2c1::CLOCK_FREQUENCY, 100_000));
             &*CELL.init(RefCell::new(i2c))
         };
         // /soc/i2c@500c5000/gpio@43 (diodes,pi4ioe5v6408)
-        let ioexp1 = ();
+        let mut ioexp1 = ();
         // /soc/i2c@500c5000/gpio@44 (diodes,pi4ioe5v6408)
-        let ioexp2 = ();
+        let mut ioexp2 = ();
         // /soc/i2c@500c5000/imu@68 (bosch,bmi270)
-        let imu = {
+        let mut imu = {
             let mut m = kumiki_bmi270::Bmi270::new(RefCellDevice::new(i2c1), imu::ADDR);
             m.init(&mut delay).ok().map(|_| AnyImu::Bmi270(m))
         };
         // /soc/i2c@500c5000/rtc@32 (epson,rx8130)
-        let rtc = {
+        let mut rtc = {
             let mut r = kumiki_rtc::Rx8130::new(RefCellDevice::new(i2c1), rtc::ADDR);
             r.init().ok().map(|_| AnyRtc::Rx8130(r))
         };
         // /soc/dsi@50105000 (espressif,esp32p4-dsi)
-        let dsi = ();
+        let mut dsi = ();
         // /display-power-sequence (m5stack,tab5-display-power-sequence)
-        let display_power = chips::tab5_display_power_on(&mut RefCellDevice::new(i2c1), pins.display_power_touch_int.degrade())?;
+        let mut display_power = chips::tab5_display_power_on(&mut RefCellDevice::new(i2c1), pins.display_power_touch_int.degrade())?;
         // probe group `touch`: first candidate that answers (retried for slow starters)
         let touch_group = {
             let mut found = None;
@@ -472,15 +493,15 @@ pub mod tab5 {
             found
         };
         // /soc/dsi@50105000/panel@0 (ilitek,ili9881c)
-        let lcd = {
+        let mut lcd = {
             let fbs = bind::dsi_frame_buffers(psram).ok_or(InitError::Config)?;
             let dsi = Dsi::init(kumiki_p4v1_hal::dsi::Panel::Ili9881c, fbs[0]).map_err(|_| InitError::Display)?;
             AnyDisplay::Ili9881c(FbDisplay::new(DsiPanel::new(dsi, fbs)).with_rotation(bind::rotation(lcd::ROTATION)))
         };
         // /backlight (gpio-backlight)
-        let lcd_backlight = AnyBacklight::Gpio(kumiki_class::GpioBacklight(Output::new(pins.lcd_backlight, true)));
+        let mut lcd_backlight = AnyBacklight::Gpio(kumiki_class::GpioBacklight(Output::new(pins.lcd_backlight, true)));
         // /buttons (kumiki,touch-keys)
-        let buttons = ButtonInputs::TouchAsA;
+        let mut buttons = ButtonInputs::TouchAsA;
         Ok(Devices {
             board: super::BoardId::M5StackTab5,
             display: lcd,
@@ -490,6 +511,7 @@ pub mod tab5 {
             power: None,
             rtc: rtc,
             speaker: None,
+            microphone: None,
             buttons: buttons,
             spare,
         })

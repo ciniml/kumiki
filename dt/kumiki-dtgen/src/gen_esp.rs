@@ -130,7 +130,8 @@ const PRELUDE: &str = r#"mod prelude {
     pub use kumiki_mpu6886::Mpu6886;
     pub use static_cell::StaticCell;
     pub use super::super::{
-        audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
+        audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs,
+        Devices, I2cBus, InitError,
         Spare,
     };
 }
@@ -153,7 +154,8 @@ const PRELUDE_P4V1: &str = r#"mod prelude {
     };
     pub use static_cell::StaticCell;
     pub use super::super::{
-        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs, Devices, I2cBus, InitError,
+        bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs, Devices,
+        I2cBus, InitError,
         Spare,
     };
 }
@@ -280,6 +282,13 @@ impl Ctx<'_> {
                 let target = phandle_target(tree, p).ok_or_else(|| self.err(format!("{arg}: unresolved")))?;
                 // The provider device is the target or its nearest ancestor on the bus.
                 self.bus_of(&target)?
+            }
+            "var" => {
+                // The bring-up variable of the node a phandle property points to
+                // (e.g. the I2S controller a codec sits on).
+                let p = me.prop(arg).ok_or_else(|| self.err(format!("missing {arg}")))?;
+                let target = phandle_target(tree, p).ok_or_else(|| self.err(format!("{arg}: unresolved")))?;
+                label(tree, &target)
             }
             "model" => binding.kumiki.model.clone().ok_or_else(|| self.err("binding has no model"))?,
             "variant" => binding.kumiki.variant.clone().ok_or_else(|| self.err("binding has no variant"))?,
@@ -460,7 +469,7 @@ fn emit_init(out: &mut String, board: &Board, bindings: &Bindings, backend: Back
         let code = ctx.expand(tpl.trim())?;
         let code = code.replace('\n', "\n        ");
         writeln!(out, "        // {path} ({})", b.compatible).unwrap();
-        writeln!(out, "        let {l} = {code};").unwrap();
+        writeln!(out, "        let mut {l} = {code};").unwrap();
     }
     // Devices
     let var_of = |path: &str| -> String {
@@ -490,12 +499,13 @@ fn emit_init(out: &mut String, board: &Board, bindings: &Bindings, backend: Back
     // RTC init templates yield an Option (the chip may not answer).
     let rtc = chosen_refs(tree, "kumiki,rtc").first().map(|p| var_of(p)).unwrap_or_else(|| "None".into());
     let speaker = chosen_refs(tree, "kumiki,speaker").first().map(|p| var_of(p)).unwrap_or_else(|| "None".into());
+    let microphone = chosen_refs(tree, "kumiki,microphone").first().map(|p| var_of(p)).unwrap_or_else(|| "None".into());
     let backlight = class_node("backlight").map(|p| var_of(&p)).unwrap_or_else(|| "AnyBacklight::None".into());
     let buttons = class_node("buttons").map(|p| var_of(&p)).ok_or_else(|| Error(format!("{}: no buttons node", board.source.display())))?;
     writeln!(out, "        Ok(Devices {{").unwrap();
     writeln!(out, "            board: super::BoardId::{},", variant_of(board.model())).unwrap();
     writeln!(out, "            display: {},", var_of(&display)).unwrap();
-    writeln!(out, "            backlight: {backlight},\n            touch: {touch},\n            imu: {imu},\n            power: {power},\n            rtc: {rtc},\n            speaker: {speaker},").unwrap();
+    writeln!(out, "            backlight: {backlight},\n            touch: {touch},\n            imu: {imu},\n            power: {power},\n            rtc: {rtc},\n            speaker: {speaker},\n            microphone: {microphone},").unwrap();
     writeln!(out, "            buttons: {buttons},\n            spare,\n        }})\n    }}").unwrap();
     Ok(())
 }
@@ -730,6 +740,7 @@ const ANY_CLASSES: &[(&str, &str, &str)] = &[
     ("backlight", "AnyBacklight", "Backlight"),
     ("rtc", "AnyRtc", "Real-time clock"),
     ("speaker", "AnySpeaker", "Audio output"),
+    ("microphone", "AnyMicrophone", "Audio input"),
 ];
 
 /// Emit the `Any<Class>` enums: one variant per binding `kumiki.variant`

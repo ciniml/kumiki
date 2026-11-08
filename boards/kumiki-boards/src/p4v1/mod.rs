@@ -28,7 +28,9 @@ use kumiki_class::{ButtonId, TouchPoint};
 use kumiki_p4v1_hal::{Peripherals, cache, clock, dsi, i2c::I2c, psram};
 
 pub use any::{AnyError, DisplayError};
-pub use generated::{AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnySpeaker, AnyTouch, BoardId, DetectLog};
+pub use generated::{
+    AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, BoardId, DetectLog,
+};
 
 /// Push-pull output (e.g. a GPIO backlight).
 pub type GpioOut = kumiki_p4v1_hal::gpio::Output;
@@ -97,6 +99,8 @@ pub struct Devices {
     pub rtc: Option<AnyRtc>,
     /// Audio output, if any (none described for this family yet).
     pub speaker: Option<AnySpeaker>,
+    /// Audio input, if any (none described for this family yet).
+    pub microphone: Option<AnyMicrophone>,
     /// Button raw-state source.
     pub buttons: ButtonInputs,
     /// Peripherals the board definition does not use.

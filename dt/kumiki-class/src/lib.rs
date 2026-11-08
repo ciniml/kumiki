@@ -108,6 +108,18 @@ pub trait Speaker {
     fn set_volume(&mut self, level: u8) -> Result<(), Self::Error>;
 }
 
+/// Audio input (microphone ADC), 16-bit stereo PCM.
+pub trait Microphone {
+    /// Error type.
+    type Error: core::fmt::Debug;
+    /// Input sample rate in Hz.
+    fn sample_rate(&self) -> u32;
+    /// Move the frames recorded so far into `out` (left, right) without
+    /// waiting; returns how many. Call often enough that the input buffer
+    /// does not overflow (older frames are lost then).
+    fn read(&mut self, out: &mut [[i16; 2]]) -> Result<usize, Self::Error>;
+}
+
 /// A backlight that is only switched on and off by a GPIO.
 pub struct GpioBacklight<P>(pub P);
 

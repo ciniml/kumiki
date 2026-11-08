@@ -10,11 +10,11 @@ use embedded_graphics_core::{
     primitives::Rectangle,
     Pixel,
 };
-use kumiki_class::{Backlight, DateTime, Imu, Power, Rtc, Speaker, Touch, TouchPoint, Vec3};
+use kumiki_class::{Backlight, DateTime, Imu, Microphone, Power, Rtc, Speaker, Touch, TouchPoint, Vec3};
 use kumiki_gfx::{FastDraw, PixelFormat, Rgb565Le};
 use kumiki_p4v1_hal::i2c;
 
-use super::{AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnySpeaker, AnyTouch};
+use super::{AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch};
 
 /// Display error: a 2D-engine (PPA) failure while presenting.
 pub type DisplayError = kumiki_p4v1_hal::fb::PpaError;
@@ -170,6 +170,17 @@ impl Speaker for AnySpeaker {
     }
     fn set_volume(&mut self, level: u8) -> Result<(), AnyError> {
         any_speaker!(self, s => s.set_volume(level).map_err(AnyError::from))
+    }
+}
+
+#[allow(unused_variables)]
+impl Microphone for AnyMicrophone {
+    type Error = AnyError;
+    fn sample_rate(&self) -> u32 {
+        any_microphone!(self, m => m.sample_rate())
+    }
+    fn read(&mut self, out: &mut [[i16; 2]]) -> Result<usize, AnyError> {
+        any_microphone!(self, m => m.read(out).map_err(AnyError::from))
     }
 }
 

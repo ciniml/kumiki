@@ -51,7 +51,9 @@ use kumiki_gfx_bus_esp::{EspQspiDmaBus, EspSpiDmaBus};
 use kumiki_gfx_panels::{Co5300, DcsPanel, Gc9107, Ili9342c};
 
 pub use any::{AnyAsyncDisplay, AnyError};
-pub use generated::{AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyRtc, AnySpeaker, AnyTouch, BoardId, DetectLog};
+pub use generated::{
+    AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, BoardId, DetectLog,
+};
 
 /// Push-pull output (e.g. a GPIO backlight).
 pub type GpioOut = esp_hal::gpio::Output<'static>;
@@ -125,6 +127,8 @@ pub struct Devices {
     pub rtc: Option<AnyRtc>,
     /// Audio output, if any (DT `chosen { kumiki,speaker }`).
     pub speaker: Option<AnySpeaker>,
+    /// Audio input, if any (DT `chosen { kumiki,microphone }`).
+    pub microphone: Option<AnyMicrophone>,
     /// Button raw-state source.
     pub buttons: ButtonInputs,
     /// Peripherals the board definition does not use, handed back to the

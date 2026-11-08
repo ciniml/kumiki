@@ -19,6 +19,7 @@
 		kumiki,power = &pmic;
 		kumiki,rtc = &rtc;
 		kumiki,speaker = &speaker;
+		kumiki,microphone = &microphone;
 	};
 
 	lcd_backlight: backlight {
@@ -115,16 +116,26 @@
 		compatible = "awinic,aw88298";
 		reg = <0x36>;
 		i2s = <&i2s1>;
-		kumiki,sample-rate = <48000>;
 		kumiki,depends-on = <&ioexp>;
+	};
+
+	/* Microphones: MIC1 / MIC2 through the ES7210 ADC on the same I2S. */
+	microphone: adc@40 {
+		compatible = "everest,es7210";
+		reg = <0x40>;
+		i2s = <&i2s1>;
 	};
 };
 
+/* Speaker out and microphone in share I2S1 and its clocks (full duplex). */
 &i2s1 {
 	status = "okay";
+	mclk-gpios = <&gpio 0 GPIO_ACTIVE_HIGH>;
 	bclk-gpios = <&gpio 34 GPIO_ACTIVE_HIGH>;
 	ws-gpios = <&gpio 33 GPIO_ACTIVE_HIGH>;
 	dout-gpios = <&gpio 13 GPIO_ACTIVE_HIGH>;
+	din-gpios = <&gpio 14 GPIO_ACTIVE_HIGH>;
+	kumiki,sample-rate = <48000>;
 };
 
 &spi2 {

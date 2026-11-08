@@ -236,19 +236,12 @@
   kumiki:
     bus: i2c
     class: speaker
-    # 16-bit stereo Philips I2S on the `i2s` controller, DMA channel 1
-    # (channel 0 belongs to the display bus).
+    # Takes the TX side of its I2S controller.
     init: |
       {
-          let rate = ${const:SAMPLE_RATE}.unwrap_or(48_000);
-          let cfg = TdmConfig::new_tdm_philips()
-              .with_sample_rate(Rate::from_hz(rate))
-              .with_data_format(DataFormat::Data16Channel16)
-              .with_channels(Channels::STEREO);
-          let i2s = I2s::new(${instance:@i2s.}, p.DMA_CH1, cfg).map_err(|_| InitError::Config)?;
-          let tx = i2s.i2s_tx.with_bclk(${pin:@i2s.bclk-gpios}).with_ws(${pin:@i2s.ws-gpios}).with_dout(${pin:@i2s.dout-gpios}).build();
+          let tx = ${var:i2s}.tx.take().ok_or(InitError::Config)?;
           let buf = esp_hal::dma_tx_stream_buffer!(16_000, 4_000);
-          let out = audio::I2sOut::new(tx, buf, rate).ok_or(InitError::Config)?;
+          let out = audio::I2sOut::new(tx, buf, ${var:i2s}.rate).ok_or(InitError::Config)?;
           audio::Aw88298::new(RefCellDevice::new(${bus}), ${const:ADDR}, out).ok().map(AnySpeaker::${variant})
       }
     variant: Aw88298
@@ -256,7 +249,26 @@
   properties:
     reg: { type: int, required: true }
     i2s: { type: phandle, required: true }
-    kumiki,sample-rate: { type: int, description: "output sample rate in Hz (default 48000)" }
+
+- compatible: "everest,es7210"
+  kumiki:
+    bus: i2c
+    class: microphone
+    # Takes the RX side of its I2S controller (MCLK from it).
+    init: |
+      {
+          let rx = ${var:i2s}.rx.take().ok_or(InitError::Config)?;
+          // Many small descriptors: consumed ones are relinked at the tail, and the
+          // DMA reads ahead, so a few would leave it no room (it stops when full).
+          let buf = esp_hal::dma_rx_stream_buffer!(16_000, 1_000);
+          let input = audio::I2sIn::new(rx, buf, ${var:i2s}.rate).ok_or(InitError::Config)?;
+          audio::Es7210::new(RefCellDevice::new(${bus}), ${const:ADDR}, input).ok().map(AnyMicrophone::${variant})
+      }
+    variant: Es7210
+    type: "audio::Es7210<SharedI2c>"
+  properties:
+    reg: { type: int, required: true }
+    i2s: { type: phandle, required: true }
 
 # ---- real-time clocks --------------------------------------------------------------
 - compatible: "belling,bm8563"
