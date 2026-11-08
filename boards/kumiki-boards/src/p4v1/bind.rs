@@ -13,19 +13,19 @@ pub fn hz(v: Option<u32>, default: u32) -> u32 {
     v.unwrap_or(default)
 }
 
-/// Two DSI frame buffers ([`dsi::FB_BYTES`] each) at the top of PSRAM
-/// (`psram` = base, size), cleared and written back. The cache autoload
-/// (prefetch) is limited to the memory below them, which keeps the scan-out
-/// from evicting the application's data (tab5-os doc/43 §4).
-pub fn dsi_frame_buffers(psram: (usize, usize)) -> Option<[usize; 2]> {
+/// Three DSI frame buffers ([`dsi::FB_BYTES`] each, 5.3 MiB in all) at the
+/// top of PSRAM (`psram` = base, size), cleared and written back. The cache
+/// autoload (prefetch) is limited to the memory below them, which keeps the
+/// scan-out from evicting the application's data (tab5-os doc/43 §4).
+pub fn dsi_frame_buffers(psram: (usize, usize)) -> Option<[usize; 3]> {
     let (base, size) = psram;
-    let need = 2 * dsi::FB_BYTES;
+    let need = 3 * dsi::FB_BYTES;
     // On a 1 MiB boundary, so autoload's limit is exact.
     let first = (base + size).checked_sub(need)? & !0xF_FFFF;
     if first < base {
         return None;
     }
-    let fbs = [first, first + dsi::FB_BYTES];
+    let fbs = [first, first + dsi::FB_BYTES, first + 2 * dsi::FB_BYTES];
     cache::autoload(first - base);
     for fb in fbs {
         // SAFETY: inside the mapped PSRAM, handed to the display only.

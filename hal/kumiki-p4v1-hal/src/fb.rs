@@ -1,11 +1,17 @@
 //! [`DsiPanel`]: the DSI output as a kumiki-gfx
 //! [`FramebufferPanel`](kumiki_gfx::FramebufferPanel) (feature `gfx`).
 //!
-//! Double-buffered: the CPU (or the PPA) draws into the back buffer while the
-//! DMA scans the front one. `present` points the DMA at the back buffer,
-//! waits until the old front is no longer scanned (two frames, see
-//! [`Dsi::show`]) and copies the changed area over with the PPA, so the new
-//! back buffer again holds the frame on screen.
+//! Triple-buffered. The DMA scans the front buffer; the CPU (or the PPA)
+//! draws into the back buffer; the third one was the front until the
+//! previous present. `present` points the DMA at the back buffer, and the
+//! buffer retired by the *previous* present becomes the new back buffer
+//! once it has been out of the scan for two frames (see [`Dsi::show`]).
+//! With one present per frame that wait is at most about one frame, where a
+//! double buffer would wait two on every present.
+//!
+//! The new back buffer holds the frame from two presents ago; the areas
+//! changed by the last two presents are copied over from the front, so it
+//! again holds the frame on screen and drawing continues incrementally.
 //!
 //! Large fills and copies go to the PPA. Cache rules for anything the PPA
 //! writes: the area is written back and invalidated first, so dirty CPU
@@ -23,24 +29,37 @@ use crate::{
     ppa::{self, Block},
 };
 
-/// Blocks narrower than this (native pixels) are drawn by the CPU.
+/// Blocks narrower than this (native pixels) are drawn by the CPU: the cache
+/// maintenance before a PPA write covers whole rows, so its cost follows the
+/// height, not the area.
 const MIN_PPA_WIDTH: u32 = 64;
 
-/// The DSI panel with two framebuffers.
+/// Frames a retired buffer may still be read by the DMA (see [`Dsi::show`]).
+const RETIRE_FRAMES: u32 = 2;
+
+/// The DSI panel with three framebuffers.
 pub struct DsiPanel {
     dsi: Dsi,
-    fbs: [usize; 2],
+    fbs: [usize; 3],
+    front: usize,
     back: usize,
-    swap_frame: u32,
+    /// Frame count when each buffer stopped being the front one.
+    retired_at: [u32; 3],
+    /// Area changed by the previous present.
+    prev_changed: Option<Rectangle>,
+    /// Statistics: presents, and how many of them had to wait.
+    presents: u32,
+    waits: u32,
 }
 
 impl DsiPanel {
     /// Wraps a running [`Dsi`] that scans `fbs[0]`; `fbs[1]` becomes the
-    /// back buffer. Both are [`FB_BYTES`] long, 8-byte aligned, in PSRAM, and
-    /// must not be used by anything else.
-    pub fn new(dsi: Dsi, fbs: [usize; 2]) -> Self {
-        let swap_frame = dsi.frames();
-        DsiPanel { dsi, fbs, back: 1, swap_frame }
+    /// back buffer. All three hold the same picture (e.g. cleared), are
+    /// [`FB_BYTES`] long, 8-byte aligned, in PSRAM, and are used by nothing
+    /// else.
+    pub fn new(dsi: Dsi, fbs: [usize; 3]) -> Self {
+        let f = dsi.frames().wrapping_sub(RETIRE_FRAMES);
+        DsiPanel { dsi, fbs, front: 0, back: 1, retired_at: [f; 3], prev_changed: None, presents: 0, waits: 0 }
     }
 
     /// The display (frame counter, DCS commands, ...).
@@ -52,6 +71,11 @@ impl DsiPanel {
     /// presenting (presenting calls it).
     pub fn service(&mut self) {
         self.dsi.service();
+    }
+
+    /// (presents, presents that waited for a buffer to leave the scan).
+    pub fn stats(&self) -> (u32, u32) {
+        (self.presents, self.waits)
     }
 
     fn block(&self, fb: usize, r: &Rectangle) -> Block {
@@ -72,9 +96,36 @@ impl DsiPanel {
         cache::invalidate(a & !127, ((a + n + 127) & !127) - (a & !127), true);
     }
 
-    fn wait_frames(&mut self, n: u32) {
-        while self.dsi.frames().wrapping_sub(self.swap_frame) < n {
-            self.dsi.service();
+    /// Copies `r` from `src` to `dst` (different buffers) and leaves it in
+    /// memory for the DMA.
+    fn copy_area(&self, dst: usize, src: usize, r: &Rectangle) -> Result<(), PpaError> {
+        if r.size.width >= MIN_PPA_WIDTH {
+            Self::before_ppa_write(dst, r);
+            return ppa::copy(&self.block(dst, r), &self.block(src, r), r.size.width, r.size.height).map_err(PpaError);
+        }
+        let (x, w) = (r.top_left.x as usize * 2, r.size.width as usize * 2);
+        for y in r.top_left.y as usize..(r.top_left.y as usize + r.size.height as usize) {
+            let off = y * WIDTH * 2 + x;
+            // SAFETY: both buffers are FB_BYTES long and owned by the panel;
+            // `r` is inside the frame.
+            unsafe { core::ptr::copy_nonoverlapping((src + off) as *const u8, (dst + off) as *mut u8, w) };
+        }
+        let (a, n) = Self::rows(dst, r);
+        dsi::flush(a, n);
+        Ok(())
+    }
+}
+
+fn union(a: Option<Rectangle>, b: &Rectangle) -> Rectangle {
+    match a {
+        None => *b,
+        Some(a) => {
+            let tl = Point::new(a.top_left.x.min(b.top_left.x), a.top_left.y.min(b.top_left.y));
+            let br = Point::new(
+                (a.top_left.x + a.size.width as i32).max(b.top_left.x + b.size.width as i32),
+                (a.top_left.y + a.size.height as i32).max(b.top_left.y + b.size.height as i32),
+            );
+            Rectangle::new(tl, Size::new((br.x - tl.x) as u32, (br.y - tl.y) as u32))
         }
     }
 }
@@ -106,24 +157,29 @@ impl FramebufferPanel for DsiPanel {
             self.dsi.service();
             return Ok(());
         };
-        // (The previous present already waited until its old front was no
-        // longer scanned, so the back buffer is free to show now.)
-        let (front, back) = (self.fbs[1 - self.back], self.fbs[self.back]);
-        self.dsi.show(back);
-        self.swap_frame = self.dsi.frames();
-        self.back = 1 - self.back;
-        // The new back (old front) lacks this frame's changes: copy them
-        // from the new front once the DMA no longer reads the new back.
-        self.wait_frames(2);
-        Self::before_ppa_write(front, changed);
-        let (w, h) = (changed.size.width, changed.size.height);
-        ppa::copy(&self.block(front, changed), &self.block(back, changed), w, h).map_err(PpaError)
+        self.dsi.service();
+        let (old_front, shown) = (self.front, self.back);
+        self.dsi.show(self.fbs[shown]);
+        self.retired_at[old_front] = self.dsi.frames();
+        self.front = shown;
+        // The third buffer, retired by the previous present.
+        let next = 3 - old_front - shown;
+        if self.dsi.frames().wrapping_sub(self.retired_at[next]) < RETIRE_FRAMES {
+            self.waits += 1;
+            while self.dsi.frames().wrapping_sub(self.retired_at[next]) < RETIRE_FRAMES {
+                self.dsi.service();
+            }
+        }
+        self.presents += 1;
+        // `next` holds the frame from two presents ago: bring the last two
+        // presents' changes over from the frame now shown.
+        let missing = union(self.prev_changed, changed);
+        self.prev_changed = Some(*changed);
+        self.back = next;
+        self.copy_area(self.fbs[next], self.fbs[shown], &missing)
     }
 
     fn hw_fill(&mut self, area: &Rectangle, pixel: &[u8]) -> bool {
-        // The cache maintenance before a PPA write covers whole rows, so its
-        // cost follows the height, not the area: tall narrow blocks (a
-        // horizontal band on a rotated screen) are cheaper on the CPU.
         if area.size.width < MIN_PPA_WIDTH {
             return false;
         }
@@ -138,7 +194,7 @@ impl FramebufferPanel for DsiPanel {
         if src.intersection(&dst).size != Size::zero() || src.size.width < MIN_PPA_WIDTH {
             // Overlapping: the PPA reads and writes in strips (tab5-os doc/44:
             // a rightward overlapping shift is slower than the CPU). Narrow:
-            // see `hw_fill`.
+            // see MIN_PPA_WIDTH.
             return false;
         }
         let fb = self.fbs[self.back];

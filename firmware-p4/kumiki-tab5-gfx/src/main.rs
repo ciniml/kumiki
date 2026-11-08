@@ -71,11 +71,14 @@ fn main() -> ! {
         tab5::Panel::St7123 => dsi::Panel::St7123,
         _ => halt("no supported panel"),
     };
-    let fbs = [base + size - (4 << 20), base + size - (4 << 20) + FB_BYTES];
+    let top = base + size - (6 << 20);
+    let fbs = [top, top + FB_BYTES, top + 2 * FB_BYTES];
     cache::autoload(fbs[0] - base);
-    // Start on a cleared buffer.
-    unsafe { core::ptr::write_bytes(fbs[0] as *mut u8, 0, FB_BYTES) };
-    dsi::flush(fbs[0], FB_BYTES);
+    // All three start out cleared.
+    for fb in fbs {
+        unsafe { core::ptr::write_bytes(fb as *mut u8, 0, FB_BYTES) };
+        dsi::flush(fb, FB_BYTES);
+    }
     let dsi = Dsi::init(panel, fbs[0]).unwrap_or_else(|e| halt(e));
     let _backlight = Output::new(p.pins.gpio22, true);
 
@@ -124,9 +127,10 @@ fn main() -> ! {
         worst_us = worst_us.max(us_since(t));
         presents += 1;
         if time::now() - last >= 1_000_000 * time::TICKS_PER_US {
+            let (total, waited) = d.panel_mut().stats();
             let dsi = d.panel_mut().dsi_mut();
             println!(
-                "presents/s {}, worst present {} us, frames {}, underruns {}, restarts {}",
+                "presents/s {}, worst present {} us, waited {waited}/{total}, frames {}, underruns {}, restarts {}",
                 presents,
                 worst_us,
                 dsi.frames(),
