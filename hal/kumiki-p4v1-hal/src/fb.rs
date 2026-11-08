@@ -23,6 +23,9 @@ use crate::{
     ppa::{self, Block},
 };
 
+/// Blocks narrower than this (native pixels) are drawn by the CPU.
+const MIN_PPA_WIDTH: u32 = 64;
+
 /// The DSI panel with two framebuffers.
 pub struct DsiPanel {
     dsi: Dsi,
@@ -118,6 +121,12 @@ impl FramebufferPanel for DsiPanel {
     }
 
     fn hw_fill(&mut self, area: &Rectangle, pixel: &[u8]) -> bool {
+        // The cache maintenance before a PPA write covers whole rows, so its
+        // cost follows the height, not the area: tall narrow blocks (a
+        // horizontal band on a rotated screen) are cheaper on the CPU.
+        if area.size.width < MIN_PPA_WIDTH {
+            return false;
+        }
         let fb = self.fbs[self.back];
         Self::before_ppa_write(fb, area);
         let color = u16::from_le_bytes([pixel[0], pixel[1]]);
@@ -126,8 +135,11 @@ impl FramebufferPanel for DsiPanel {
 
     fn hw_copy(&mut self, src: &Rectangle, dst_top_left: Point) -> bool {
         let dst = Rectangle::new(dst_top_left, src.size);
-        if src.intersection(&dst).size != Size::zero() {
-            return false; // overlapping: the PPA reads and writes in strips
+        if src.intersection(&dst).size != Size::zero() || src.size.width < MIN_PPA_WIDTH {
+            // Overlapping: the PPA reads and writes in strips (tab5-os doc/44:
+            // a rightward overlapping shift is slower than the CPU). Narrow:
+            // see `hw_fill`.
+            return false;
         }
         let fb = self.fbs[self.back];
         let (a, n) = Self::rows(fb, src);
