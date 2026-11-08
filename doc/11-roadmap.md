@@ -104,6 +104,8 @@
 
 | M4 | a〜d 完了（詳細は [12](12-m4-tab5-plan.md)）：ESP32-P4 rev v1 用の自前 HAL（`kumiki-p4v1-hal`）、DSI 表示 64fps、PPA の全画面塗りつぶし 5.2ms、`FramebufferPanel` / `FbDisplay`。`tab5.dts` から `kumiki-dtgen p4v1` でボード定義を生成し、ESP32-S3 用と同じデモのソースが Tab5 でも動く（esp-hal 以外の HAL でも kumiki-dt が成り立つことを確認）。残り：ST7123 のパネル、画面の回転、present の待ちの短縮 |
 
+| 共通化の確認 | アプリ本体を HAL から独立させ（`firmware/kumiki-demo/src/app.rs`）、`Any*` を生成に切り替えた後のバイナリで、CoreS3 / AtomS3 / StopWatch / Tab5 の 4 機種の判別と初期化を確認した（2026-11-08） |
+
 ### 実機で分かったこと
 
 - **AtomS3 の判別は IMU に頼らない**：手元の個体は IMU の小基板の SDA が本体とつながっておらず（内部プルダウンで Low、プルアップで High = 線が浮いている）、M5Unified でも IMU が見えなかった。M5GFX と同じくパネル ID（GC9107 の RDDID）で判別する。
