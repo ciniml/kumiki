@@ -15,6 +15,7 @@
 #![cfg_attr(not(test), no_std)]
 #![warn(missing_docs)]
 
+pub mod buffered;
 pub mod bus;
 pub mod display;
 pub mod draw;
@@ -22,6 +23,7 @@ pub mod panel;
 pub mod pixel;
 pub mod sprite;
 
+pub use buffered::BufferedDisplay;
 pub use display::Display;
 pub use draw::{AsyncFastDraw, FastDraw};
 pub use panel::Rotation;

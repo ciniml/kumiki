@@ -145,7 +145,10 @@ mod fifo {
 
 use fifo::Fifo;
 
-enum Link<'d, Dm: DriverMode> {
+mod qspi;
+pub use qspi::EspQspiDmaBus;
+
+pub(crate) enum Link<'d, Dm: DriverMode> {
     Idle(SpiDma<'d, Dm>),
     Busy(SpiDmaTransfer<'d, Dm, DmaTxBuf>),
     Poisoned,

@@ -28,6 +28,34 @@ pub trait Model {
     const RESET_RASET_WHEN_SWAPPED: bool = false;
     /// Expected RDDID (0x04) response: `(mask, value)`.
     const ID: Option<(u32, u32)> = None;
+    /// Required alignment of the window's x start and width (in pixels).
+    /// AMOLED controllers such as CO5300 need 2; draw through a
+    /// [`kumiki_gfx::buffered::BufferedDisplay`] for those.
+    const X_ALIGN: u16 = 1;
+}
+
+/// Chipone CO5300 AMOLED controller as used on M5Stack StopWatch
+/// (480×480 memory, 1.75" round 466×466 panel; QSPI).
+/// Init table: M5GFX `Panel_StopWatch` (MIT, (c) M5Stack).
+pub struct Co5300;
+
+impl Model for Co5300 {
+    const NAME: &'static str = "CO5300";
+    const MEMORY_SIZE: (u16, u16) = (480, 480);
+    #[rustfmt::skip]
+    const INIT: &'static [u8] = &[
+        0x11, DELAY, 150,                   // sleep out
+        0xC4, 1, 0x80,
+        0x35, 1, 0x80,                      // tearing effect on
+        0x44, 2, 0x01, 0xD2,                // tear scanline = 466
+        0x53, 1, 0x20,                      // brightness control on
+        0x20, 0,                            // inversion off
+        0x36, 1, 0x00,                      // MADCTL
+        0x51, 1, 0xA0,                      // brightness
+        0x29, 0,                            // display on
+        0xFF, 0xFF,
+    ];
+    const X_ALIGN: u16 = 2;
 }
 
 /// Ilitek ILI9342C (320×240). Used on M5Stack CoreS3 / Core2.

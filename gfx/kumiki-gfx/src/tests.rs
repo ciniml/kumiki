@@ -175,3 +175,23 @@ fn sprite_draws_embedded_graphics_and_pushes() {
     assert_eq!(d.panel().px(5, 5), Rgb565::RED);
     assert_eq!(d.panel().px(0, 0), Rgb565::BLACK);
 }
+
+#[test]
+fn buffered_flush_aligns_dirty_rect() {
+    use crate::BufferedDisplay;
+    let d = Display::new(MockPanel::new(8, 4));
+    let mut b = BufferedDisplay::<_, Rgb565Be, _>::new(d, Size::new(8, 4), vec![0u8; 8 * 4 * 2], 2).unwrap();
+    b.flush().unwrap(); // initial full flush
+    let before = b.target_mut().panel().windows;
+    // One odd pixel at x=3 → flushed window must be x=2..3 (aligned to 2).
+    Pixel(Point::new(3, 1), Rgb565::GREEN).draw(&mut b).unwrap();
+    b.flush().unwrap();
+    let p = b.target_mut().panel();
+    assert_eq!(p.windows - before, 1);
+    assert_eq!(p.win, Rectangle::new(Point::new(2, 1), Size::new(2, 1)));
+    assert_eq!(p.px(3, 1), Rgb565::GREEN);
+    // Nothing dirty → no transfer.
+    let n = p.windows;
+    b.flush().unwrap();
+    assert_eq!(b.target_mut().panel().windows, n);
+}

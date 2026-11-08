@@ -95,7 +95,10 @@ pub fn yield_now() -> impl Future<Output = ()> {
 pub async fn render_loop(mut display: AnyAsyncDisplay, buf: &'static mut [u8]) -> ! {
     RENDER_GO.wait().await; // let the monitor measure the idle baseline first
     let size = AsyncFastDraw::size(&display);
-    let (w, h) = (size.width as i32, size.height as i32);
+    // Larger panels (StopWatch 468×468) get a centred MAX_W×MAX_H window; x is
+    // kept even for controllers that need 2-pixel alignment.
+    let (w, h) = ((size.width as i32).min(MAX_W as i32), (size.height as i32).min(MAX_H as i32));
+    let origin = Point::new(((size.width as i32 - w) / 2) & !1, (size.height as i32 - h) / 2);
     let n = (w * h * 2) as usize;
     let mut spr = Sprite::<Rgb565Be, _>::new(&mut buf[..n], w as u16, h as u16).unwrap();
     let style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
@@ -114,7 +117,7 @@ pub async fn render_loop(mut display: AnyAsyncDisplay, buf: &'static mut [u8]) -
         )
         .ok();
         // DMA push: while each chunk is on the wire, other futures run.
-        spr.push_async(&mut display, Point::zero()).await.ok();
+        spr.push_async(&mut display, origin).await.ok();
         FRAMES.fetch_add(1, Ordering::Relaxed);
         x += vx;
         y += vy;

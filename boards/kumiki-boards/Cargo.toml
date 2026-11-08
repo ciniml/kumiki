@@ -13,6 +13,7 @@ chip-esp32s3 = ["kumiki-gfx-bus-esp/fifo-esp32s3"]
 # Optional board pinning (no feature = every board of the chip is a detection candidate).
 board-m5stack-cores3 = []
 board-m5stack-atoms3 = []
+board-m5stack-stopwatch = []
 
 [dependencies]
 kumiki-gfx = { path = "../../gfx/kumiki-gfx" }

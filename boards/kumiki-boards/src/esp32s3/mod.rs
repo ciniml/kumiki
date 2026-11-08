@@ -1,12 +1,18 @@
-//! ESP32-S3 board family: M5Stack CoreS3 and AtomS3.
+//! ESP32-S3 board family: M5Stack CoreS3, AtomS3 and StopWatch.
 //!
 //! Detection order (no output pin of another candidate is driven before its
 //! board is identified):
+//! 0. Chips with embedded octal PSRAM (eFuse `PSRAM_CAP`, e.g. ESP32-S3R8)
+//!    own GPIO33..37, so candidates that touch those pins (CoreS3: GPIO35/37,
+//!    AtomS3: GPIO33/34) are skipped on them, as M5GFX does with
+//!    `touches_opi_pins`.
 //! 1. CoreS3: internal I²C (SDA 12 / SCL 11) answers with AXP2101 id 0x4A at
 //!    0x34 and AW9523B id 0x23 at 0x58 (as in M5GFX's autodetect).
 //! 2. AtomS3: the GC9107 panel on the AtomS3 display pins answers RDDID with
 //!    `00 91 07` (3-wire SPI, bit-banged), as in M5GFX's autodetect.
 //!    The MPU-6886 is probed afterwards and is optional.
+//! 3. StopWatch (octal-PSRAM chips only): the M5PM1 PMIC answers at 0x6E on
+//!    the internal I²C (SDA 47 / SCL 48).
 
 mod any;
 pub mod chips;
@@ -34,8 +40,8 @@ use esp_hal::{
 };
 use kumiki_class::{ButtonId, TouchPoint};
 use kumiki_gfx::Display;
-use kumiki_gfx_bus_esp::{EspSpiDmaBus, SpiHost};
-use kumiki_gfx_panels::{DcsConfig, DcsPanel, Gc9107, Ili9342c, NoPin};
+use kumiki_gfx_bus_esp::{EspQspiDmaBus, EspSpiDmaBus, SpiHost};
+use kumiki_gfx_panels::{Co5300, DcsConfig, DcsPanel, Gc9107, Ili9342c, NoPin};
 use kumiki_mpu6886::Mpu6886;
 use static_cell::StaticCell;
 
@@ -58,8 +64,23 @@ pub type CoreS3AsyncDisplay = Display<DcsPanel<AsyncPanelBus, Ili9342c>>;
 /// AtomS3 display, `async`.
 pub type AtomS3AsyncDisplay = Display<DcsPanel<AsyncPanelBus, Gc9107>>;
 
-const CORES3: bool = cfg!(feature = "board-m5stack-cores3") || !cfg!(any(feature = "board-m5stack-atoms3"));
-const ATOMS3: bool = cfg!(feature = "board-m5stack-atoms3") || !cfg!(any(feature = "board-m5stack-cores3"));
+/// StopWatch display (CO5300 over QSPI, frame-buffered in PSRAM).
+pub type StopWatchDisplay = kumiki_gfx::BufferedDisplay<
+    Display<DcsPanel<EspQspiDmaBus<'static, Blocking>, Co5300>>,
+    kumiki_gfx::Rgb565Be,
+    &'static mut [u8],
+>;
+/// StopWatch display, `async` (push whole aligned frames from your own buffer).
+pub type StopWatchAsyncDisplay = Display<DcsPanel<EspQspiDmaBus<'static, esp_hal::Async>, Co5300>>;
+
+const ANY_PINNED: bool = cfg!(any(
+    feature = "board-m5stack-cores3",
+    feature = "board-m5stack-atoms3",
+    feature = "board-m5stack-stopwatch"
+));
+const CORES3: bool = !ANY_PINNED || cfg!(feature = "board-m5stack-cores3");
+const ATOMS3: bool = !ANY_PINNED || cfg!(feature = "board-m5stack-atoms3");
+const STOPWATCH: bool = !ANY_PINNED || cfg!(feature = "board-m5stack-stopwatch");
 
 /// Boards of this chip family.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -68,6 +89,8 @@ pub enum BoardId {
     M5StackCoreS3,
     /// M5Stack AtomS3.
     M5StackAtomS3,
+    /// M5Stack StopWatch.
+    M5StackStopWatch,
 }
 
 impl BoardId {
@@ -76,6 +99,7 @@ impl BoardId {
         match self {
             BoardId::M5StackCoreS3 => "M5Stack CoreS3",
             BoardId::M5StackAtomS3 => "M5Stack AtomS3",
+            BoardId::M5StackStopWatch => "M5Stack StopWatch",
         }
     }
 }
@@ -91,6 +115,10 @@ pub enum InitError {
         aw9523: Option<u8>,
         /// RDDID bytes read on the AtomS3 display pins.
         atoms3_panel_id: [u8; 3],
+        /// Whether the chip has embedded octal PSRAM (eFuse PSRAM_CAP).
+        octal_psram: bool,
+        /// M5PM1 register 0x00 on I²C 47/48.
+        pm1: Option<u8>,
     },
     /// A peripheral could not be configured.
     Config,
@@ -102,8 +130,14 @@ pub enum InitError {
 
 /// Raw button sources of the detected board.
 pub enum ButtonInputs {
-    /// AtomS3: the screen is a push button on GPIO41 (active low).
-    Gpio(Input<'static>),
+    /// Active-low GPIO buttons A and (optionally) B.
+    /// AtomS3: the screen button on GPIO41. StopWatch: A = GPIO2, B = GPIO1.
+    Gpio {
+        /// Button A.
+        a: Input<'static>,
+        /// Button B.
+        b: Option<Input<'static>>,
+    },
     /// CoreS3: no front buttons; a touch anywhere acts as button A.
     TouchAsA,
 }
@@ -173,7 +207,10 @@ impl ButtonInputs {
     /// by boards that map touches to buttons.
     pub fn raw(&mut self, touch: Option<&mut AnyTouch>) -> u8 {
         match self {
-            ButtonInputs::Gpio(pin) => (pin.is_low() as u8) << ButtonId::A as u8,
+            ButtonInputs::Gpio { a, b } => {
+                ((a.is_low() as u8) << ButtonId::A as u8)
+                    | ((b.as_ref().is_some_and(|b| b.is_low()) as u8) << ButtonId::B as u8)
+            }
             ButtonInputs::TouchAsA => {
                 let mut pts = [TouchPoint::default(); 1];
                 let touched = touch
@@ -190,8 +227,22 @@ static I2C_INT: StaticCell<RefCell<I2cBus>> = StaticCell::new();
 /// Probe which board this is, borrowing the peripherals only for the duration.
 fn detect(p: &mut Peripherals) -> Result<BoardId, InitError> {
     let cfg = I2cConfig::default().with_frequency(Rate::from_khz(100));
-    let (mut axp, mut aw, mut id) = (None, None, [0u8; 3]);
-    if CORES3 {
+    let (mut axp, mut aw, mut id, mut pm1) = (None, None, [0u8; 3], None);
+    // PSRAM_CAP: 0 = none, 2 = 2 MB quad; other values are embedded octal PSRAM.
+    let cap: u8 = esp_hal::efuse::read_field_le(esp_hal::efuse::PSRAM_CAP);
+    let octal_psram = cap != 0 && cap != 2;
+    if STOPWATCH && octal_psram {
+        probe::i2c_bus_recover(p.GPIO48.reborrow(), p.GPIO47.reborrow());
+        let mut i2c = I2c::new(p.I2C1.reborrow(), cfg)
+            .map_err(|_| InitError::Config)?
+            .with_sda(p.GPIO47.reborrow())
+            .with_scl(p.GPIO48.reborrow());
+        pm1 = chips::read_reg(&mut i2c, chips::PM1_ADDR, 0x00).ok();
+        if pm1.is_some() {
+            return Ok(BoardId::M5StackStopWatch);
+        }
+    }
+    if CORES3 && !octal_psram {
         probe::i2c_bus_recover(p.GPIO11.reborrow(), p.GPIO12.reborrow());
         let mut i2c = I2c::new(p.I2C0.reborrow(), cfg)
             .map_err(|_| InitError::Config)?
@@ -203,7 +254,7 @@ fn detect(p: &mut Peripherals) -> Result<BoardId, InitError> {
             return Ok(BoardId::M5StackCoreS3);
         }
     }
-    if ATOMS3 {
+    if ATOMS3 && !octal_psram {
         // GC9107 panel id over the AtomS3 display pins (SCK 17, SDA 21, CS 15, DC 33, RST 34).
         id = probe::read_dcs_id_3wire(
             p.GPIO17.reborrow(),
@@ -216,7 +267,7 @@ fn detect(p: &mut Peripherals) -> Result<BoardId, InitError> {
             return Ok(BoardId::M5StackAtomS3);
         }
     }
-    Err(InitError::UnknownBoard { axp2101: axp, aw9523: aw, atoms3_panel_id: id })
+    Err(InitError::UnknownBoard { axp2101: axp, aw9523: aw, atoms3_panel_id: id, octal_psram, pm1 })
 }
 
 /// Detect the board and bring every device up. Call once, after `esp_hal::init`.
@@ -230,7 +281,77 @@ pub fn init(mut p: Peripherals) -> Result<Devices, InitError> {
     match board {
         BoardId::M5StackCoreS3 => init_cores3(p, buf_a, buf_b),
         BoardId::M5StackAtomS3 => init_atoms3(p, buf_a, buf_b),
+        BoardId::M5StackStopWatch => init_stopwatch(p, buf_a, buf_b),
     }
+}
+
+#[inline(never)]
+fn init_stopwatch(mut p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devices, InitError> {
+    let spare = take_spare!(p);
+    let mut delay = Delay::new();
+
+    // Frame buffer in octal PSRAM (468×468×2 ≈ 428 KiB).
+    let psram = esp_hal::psram::Psram::new(p.PSRAM, esp_hal::psram::PsramConfig::default());
+    let (ptr, len) = psram.raw_parts();
+    core::mem::forget(psram); // keep the mapping for the program's lifetime
+    const W: u16 = 468;
+    const H: u16 = 468;
+    let fb_len = W as usize * H as usize * 2;
+    if len < fb_len {
+        return Err(InitError::Config);
+    }
+    // SAFETY: PSRAM is mapped for the program's lifetime and used only here.
+    let fb: &'static mut [u8] = unsafe { core::slice::from_raw_parts_mut(ptr, fb_len) };
+
+    // i2c_int → pm1 → ioe1 (LCD/touch power + reset) → panel → touch, imu
+    let i2c = I2c::new(p.I2C1, I2cConfig::default().with_frequency(Rate::from_khz(100)))
+        .map_err(|_| InitError::Config)?
+        .with_sda(p.GPIO47)
+        .with_scl(p.GPIO48);
+    let bus: &'static RefCell<I2cBus> = I2C_INT.init(RefCell::new(i2c));
+    {
+        // Hold the display CS high while the panel powers up.
+        let _cs = Output::new(p.GPIO39.reborrow(), Level::High, OutputConfig::default());
+        let mut dev = RefCellDevice::new(bus);
+        chips::stopwatch_power_on(&mut dev, &mut delay).map_err(InitError::I2c)?;
+    }
+
+    let spi = Spi::new(p.SPI2, SpiConfig::default().with_frequency(Rate::from_mhz(40)).with_mode(Mode::_0))
+        .map_err(|_| InitError::Config)?
+        .with_sck(p.GPIO40)
+        .with_cs(p.GPIO39)
+        .with_sio0(p.GPIO41)
+        .with_sio1(p.GPIO42)
+        .with_sio2(p.GPIO46)
+        .with_sio3(p.GPIO45)
+        .with_dma(p.DMA_CH0);
+    let panel_bus = EspQspiDmaBus::new(spi, buf_a, buf_b);
+    // 466×466 round panel; M5GFX uses 468×468 at x offset 6 in a 480×480 memory.
+    let cfg = DcsConfig { panel_size: (W, H), offset: (6, 0), offset_rotation: 0, invert: false, rgb_order: true };
+    let mut panel = DcsPanel::new(panel_bus, Co5300, cfg, None::<NoPin>);
+    panel.init(&mut delay).map_err(|_| InitError::Display)?;
+    let mut display = kumiki_gfx::BufferedDisplay::new(Display::new(panel), embedded_graphics_core::geometry::Size::new(W as u32, H as u32), fb, 2)
+        .ok_or(InitError::Config)?;
+    embedded_graphics_core::draw_target::DrawTarget::clear(&mut display, embedded_graphics_core::pixelcolor::Rgb565::new(0, 0, 0)).ok();
+    display.flush().map_err(|_| InitError::Display)?;
+
+    let touch = Some(AnyTouch::Cst820(chips::Cst820 { i2c: RefCellDevice::new(bus), scale: 2 }));
+    let mut bmi = kumiki_bmi270::Bmi270::new(RefCellDevice::new(bus), kumiki_bmi270::DEFAULT_ADDRESS);
+    let imu = bmi.init(&mut delay).ok().map(|_| AnyImu::Bmi270(bmi));
+
+    let a = Input::new(p.GPIO2, InputConfig::default().with_pull(Pull::Up));
+    let b = Input::new(p.GPIO1, InputConfig::default().with_pull(Pull::Up));
+
+    Ok(Devices {
+        board: BoardId::M5StackStopWatch,
+        display: AnyDisplay::StopWatch(display),
+        backlight: AnyBacklight::None,
+        touch,
+        imu,
+        power: None,
+        buttons: ButtonInputs::Gpio { a, b: Some(b) },
+        spare,
+    })
 }
 
 #[inline(never)]
@@ -335,7 +456,7 @@ fn init_atoms3(mut p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<D
         touch: None,
         imu,
         power: None,
-        buttons: ButtonInputs::Gpio(button),
+        buttons: ButtonInputs::Gpio { a: button, b: None },
         spare,
     })
 }

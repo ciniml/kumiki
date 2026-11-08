@@ -89,6 +89,80 @@ pub fn aw9523_init_cores3<I: I2c>(i2c: &mut I, lcd_reset_released: bool) -> Resu
     write_reg(i2c, AW9523_ADDR, 0x03, p1)
 }
 
+// ---- M5PM1 / M5IOE1 (StopWatch) ------------------------------------------------
+
+/// M5PM1 PMIC 7-bit address.
+pub const PM1_ADDR: u8 = 0x6E;
+/// M5IOE1 IO expander 7-bit address.
+pub const IOE1_ADDR: u8 = 0x4F;
+
+fn update_reg<I: I2c>(i2c: &mut I, addr: u8, reg: u8, clear: u8, set: u8) -> Result<(), I::Error> {
+    let v = read_reg(i2c, addr, reg)?;
+    write_reg(i2c, addr, reg, (v & !clear) | set)
+}
+
+/// StopWatch power-on: PMIC rails, then IO expander (display power, display /
+/// touch reset pulse). Port of M5GFX `pmic_ops::stopwatch_power_on`
+/// (MIT, (c) M5Stack).
+pub fn stopwatch_power_on<I: I2c>(i2c: &mut I, delay: &mut impl embedded_hal::delay::DelayNs) -> Result<(), I::Error> {
+    write_reg(i2c, PM1_ADDR, 0x09, 0x00)?;
+    write_reg(i2c, PM1_ADDR, 0x0A, 0x00)?;
+    update_reg(i2c, PM1_ADDR, 0x06, 0, 0x17)?;
+    // The IO expander boots later than the PMIC: wait up to 500 ms for an ACK.
+    let mut ready = false;
+    for _ in 0..50 {
+        if read_reg(i2c, IOE1_ADDR, 0x00).is_ok() {
+            ready = true;
+            break;
+        }
+        delay.delay_ms(10);
+    }
+    if !ready {
+        // Let the next access report the error.
+        read_reg(i2c, IOE1_ADDR, 0x00)?;
+    }
+    write_reg(i2c, IOE1_ADDR, 0x23, 0x00)?;
+    update_reg(i2c, IOE1_ADDR, 0x13, 0x9D, 0)?;
+    update_reg(i2c, IOE1_ADDR, 0x03, 0, 0x9D)?;
+    update_reg(i2c, IOE1_ADDR, 0x05, 0, 0x99)?;
+    delay.delay_ms(10);
+    update_reg(i2c, IOE1_ADDR, 0x05, 0x18, 0)?; // reset pulse (display / touch)
+    delay.delay_ms(8);
+    update_reg(i2c, IOE1_ADDR, 0x05, 0, 0x18)?;
+    delay.delay_ms(2);
+    update_reg(i2c, IOE1_ADDR, 0x14, 0x02, 0)?;
+    update_reg(i2c, IOE1_ADDR, 0x04, 0, 0x02)?;
+    update_reg(i2c, IOE1_ADDR, 0x06, 0x02, 0)
+}
+
+// ---- CST820 ------------------------------------------------------------------
+
+/// Hynitron CST820 touch controller (CST816-compatible register map).
+pub struct Cst820<I> {
+    /// The (shared) I²C device.
+    pub i2c: I,
+    /// Raw-to-pixel scale (StopWatch reports 0..233 for a 466 px panel).
+    pub scale: i16,
+}
+
+/// CST820 7-bit address.
+pub const CST820_ADDR: u8 = 0x15;
+
+impl<I: I2c> kumiki_class::Touch for Cst820<I> {
+    type Error = I::Error;
+    fn read(&mut self, out: &mut [TouchPoint]) -> Result<usize, I::Error> {
+        let mut b = [0u8; 5];
+        self.i2c.write_read(CST820_ADDR, &[0x02], &mut b)?;
+        if b[0] & 0x0F == 0 || out.is_empty() {
+            return Ok(0);
+        }
+        let x = (((b[1] & 0x0F) as i16) << 8) | b[2] as i16;
+        let y = (((b[3] & 0x0F) as i16) << 8) | b[4] as i16;
+        out[0] = TouchPoint { x: x * self.scale, y: y * self.scale, id: 0 };
+        Ok(1)
+    }
+}
+
 // ---- FT6336U -----------------------------------------------------------------
 
 /// FocalTech FT6336U touch controller (minimal polling reader).

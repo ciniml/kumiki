@@ -9,7 +9,7 @@ pub mod dcs;
 pub mod models;
 
 pub use dcs::{DcsConfig, DcsPanel, NoPin, PanelError};
-pub use models::{Gc9107, Ili9342c, Model};
+pub use models::{Co5300, Gc9107, Ili9342c, Model};
 
 #[cfg(test)]
 mod tests {

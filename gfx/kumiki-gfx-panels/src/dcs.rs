@@ -182,6 +182,12 @@ impl<B, M: Model, RST: OutputPin> DcsPanel<B, M, RST> {
 
     /// Compute the CASET/RASET payloads for `area`; returns which ones changed.
     fn window_params(&mut self, area: &Rectangle) -> (Option<[u8; 4]>, Option<[u8; 4]>) {
+        debug_assert!(
+            (area.top_left.x as u16).is_multiple_of(M::X_ALIGN) && (area.size.width as u16).is_multiple_of(M::X_ALIGN),
+            "window x/width must be multiples of {} on {} (use BufferedDisplay)",
+            M::X_ALIGN,
+            M::NAME
+        );
         let xs = area.top_left.x as u16 + self.colstart;
         let xe = xs + area.size.width as u16 - 1;
         let ys = area.top_left.y as u16 + self.rowstart;

@@ -184,6 +184,7 @@ fn main() -> ! {
                 spr.push_keyed(&mut display, Point::new(x, y), Rgb565::MAGENTA).ok();
             }
         }
+        display.flush().ok(); // frame-buffered displays (StopWatch) send changes now
         redraw = false;
         frame += 1;
         delay.delay_millis(16);
