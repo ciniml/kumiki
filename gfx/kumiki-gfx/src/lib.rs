@@ -22,8 +22,10 @@ pub mod draw;
 pub mod panel;
 pub mod pixel;
 pub mod sprite;
+pub mod viewport;
 
 pub use buffered::BufferedDisplay;
+pub use viewport::Viewport;
 pub use display::Display;
 pub use draw::{AsyncFastDraw, FastDraw};
 pub use panel::Rotation;

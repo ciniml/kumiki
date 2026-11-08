@@ -177,6 +177,35 @@ fn sprite_draws_embedded_graphics_and_pushes() {
 }
 
 #[test]
+fn viewport_translates_and_clips() {
+    use crate::Viewport;
+    let mut d = Display::new(MockPanel::new(10, 10));
+    {
+        let mut v = Viewport::new(&mut d, Rectangle::new(Point::new(3, 2), Size::new(4, 4)));
+        assert_eq!(v.size(), Size::new(4, 4));
+        // Overhanging fill is clipped to the viewport.
+        v.fill_rect(&Rectangle::new(Point::new(-1, -1), Size::new(3, 3)), Rgb565::RED).unwrap();
+        Pixel(Point::new(3, 3), Rgb565::GREEN).draw(&mut v).unwrap();
+        Pixel(Point::new(4, 0), Rgb565::BLUE).draw(&mut v).unwrap(); // outside → dropped
+        // Blit of a 3×3 block at (2,2): only its top-left 2×2 lands inside.
+        let mut src = vec![0u8; 3 * 3 * 2];
+        #[allow(clippy::chunks_exact_to_as_chunks)]
+        for (i, px) in src.chunks_exact_mut(2).enumerate() {
+            Rgb565Be::encode(if i == 0 { Rgb565::WHITE } else { Rgb565::CYAN }, px);
+        }
+        v.blit::<Rgb565Be>(&Rectangle::new(Point::new(2, 2), Size::new(3, 3)), &src, 3).unwrap();
+    }
+    let p = d.panel();
+    assert_eq!(p.px(3, 2), Rgb565::RED);
+    assert_eq!(p.px(4, 3), Rgb565::RED);
+    assert_eq!(p.px(2, 2), Rgb565::BLACK);
+    assert_eq!(p.px(7, 2), Rgb565::BLACK); // the dropped pixel would be at x = 7
+    assert_eq!(p.px(5, 4), Rgb565::WHITE);
+    assert_eq!(p.px(6, 5), Rgb565::CYAN);
+    assert_eq!(p.px(7, 6), Rgb565::BLACK);
+}
+
+#[test]
 fn buffered_flush_aligns_dirty_rect() {
     use crate::BufferedDisplay;
     let d = Display::new(MockPanel::new(8, 4));

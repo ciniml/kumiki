@@ -1,9 +1,15 @@
-//! kumiki demo: the same binary runs on M5Stack CoreS3 and AtomS3.
+//! kumiki demo: the same binary runs on M5Stack CoreS3, AtomS3 and StopWatch.
 //!
-//! Button A (AtomS3: the screen button, CoreS3: touch anywhere) cycles pages:
+//! Button A (AtomS3: the screen button, CoreS3: touch anywhere, StopWatch:
+//! A or B) cycles pages:
 //! 0. board info + colour bars
 //! 1. IMU readings (or "no IMU")
 //! 2. keyed-sprite animation
+//! 3. touch test (boards with touch)
+//!
+//! Pages 0–2 are drawn inside the display's *safe area* through a `Viewport`,
+//! so they stay visible on StopWatch's round panel; the touch test uses full
+//! panel coordinates.
 #![no_std]
 #![no_main]
 
@@ -19,9 +25,9 @@ use embedded_graphics::{
 use esp_backtrace as _;
 use esp_hal::{clock::CpuClock, delay::Delay, main, time::Instant};
 use esp_println::println;
-use kumiki_boards::{AnyDisplay, Devices};
+use kumiki_boards::Devices;
 use kumiki_class::{Backlight, ButtonKind, Buttons, Imu, Power, Touch, TouchPoint};
-use kumiki_gfx::{FastDraw, Rgb565Be, Sprite};
+use kumiki_gfx::{FastDraw, Rgb565Be, Sprite, Viewport};
 
 esp_bootloader_esp_idf::esp_app_desc!();
 
@@ -49,11 +55,15 @@ impl<const N: usize> core::fmt::Write for Line<N> {
     }
 }
 
-fn font_for(d: &AnyDisplay) -> &'static MonoFont<'static> {
+/// Anything the demo draws on: the display itself or a `Viewport` of it.
+trait Canvas: DrawTarget<Color = Rgb565> + FastDraw + OriginDimensions {}
+impl<T: DrawTarget<Color = Rgb565> + FastDraw + OriginDimensions> Canvas for T {}
+
+fn font_for<D: OriginDimensions>(d: &D) -> &'static MonoFont<'static> {
     if d.size().width >= 240 { &FONT_10X20 } else { &FONT_6X10 }
 }
 
-fn text(d: &mut AnyDisplay, s: &str, row: i32, color: Rgb565) {
+fn text<D: Canvas>(d: &mut D, s: &str, row: i32, color: Rgb565) {
     let font = font_for(d);
     let style = MonoTextStyleBuilder::new().font(font).text_color(color).background_color(Rgb565::BLACK).build();
     let h = font.character_size.height as i32;
@@ -63,7 +73,7 @@ fn text(d: &mut AnyDisplay, s: &str, row: i32, color: Rgb565) {
     Text::new(s, Point::new(2, row * h + 2 + font.baseline as i32), style).draw(d).ok();
 }
 
-fn draw_page0(d: &mut AnyDisplay, name: &str) {
+fn draw_page0<D: Canvas>(d: &mut D, name: &str) {
     d.clear(Rgb565::BLACK).ok();
     let size = d.size();
     let bars = [Rgb565::RED, Rgb565::GREEN, Rgb565::BLUE, Rgb565::YELLOW, Rgb565::CYAN, Rgb565::MAGENTA, Rgb565::WHITE];
@@ -107,6 +117,9 @@ fn main() -> ! {
     let mut page = 0u8;
     // Boards with touch get a 4th page: touch calibration targets.
     let pages: u8 = if touch.is_some() { 4 } else { 3 };
+    // Visible area: whole screen, or the square inscribed in a round panel.
+    let safe = display.safe_area();
+    println!("safe area: {:?}", safe);
     let mut redraw = true;
     let mut frame = 0i32;
     let (mut touch_ok, mut touch_err, mut touch_max) = (0u32, 0u32, 0usize);
@@ -124,10 +137,14 @@ fn main() -> ! {
         });
 
         let size = display.size();
+        if redraw && page != 3 {
+            display.clear(Rgb565::BLACK).ok(); // also clears outside the safe area
+        }
         match page {
             0 => {
+                let mut v = Viewport::new(&mut display, safe);
                 if redraw {
-                    draw_page0(&mut display, board.name());
+                    draw_page0(&mut v, board.name());
                 }
                 if frame % 30 == 0 {
                     if let Some(pw) = power.as_mut() {
@@ -135,35 +152,35 @@ fn main() -> ! {
                         let mv = pw.battery_mv().ok().flatten().unwrap_or(0);
                         let usb = pw.vbus_present().ok().flatten().unwrap_or(false);
                         let _ = write!(l, "bat {}mV usb {}", mv, if usb { "yes" } else { "no" });
-                        text(&mut display, l.as_str(), 3, Rgb565::new(20, 40, 31));
+                        text(&mut v, l.as_str(), 3, Rgb565::new(20, 40, 31));
                     }
                 }
             }
             1 => {
+                let mut v = Viewport::new(&mut display, safe);
                 if redraw {
-                    display.clear(Rgb565::BLACK).ok();
-                    text(&mut display, "IMU", 0, Rgb565::new(31, 40, 0));
+                    text(&mut v, "IMU", 0, Rgb565::new(31, 40, 0));
                 }
                 match imu.as_mut() {
                     Some(m) => {
                         if let (Ok(a), Ok(g)) = (m.accel(), m.gyro()) {
                             let mut l = Line::<32>::new();
                             let _ = write!(l, "ax {:+.2}", a.x);
-                            text(&mut display, l.as_str(), 1, Rgb565::WHITE);
+                            text(&mut v, l.as_str(), 1, Rgb565::WHITE);
                             let mut l = Line::<32>::new();
                             let _ = write!(l, "ay {:+.2}", a.y);
-                            text(&mut display, l.as_str(), 2, Rgb565::WHITE);
+                            text(&mut v, l.as_str(), 2, Rgb565::WHITE);
                             let mut l = Line::<32>::new();
                             let _ = write!(l, "az {:+.2}", a.z);
-                            text(&mut display, l.as_str(), 3, Rgb565::WHITE);
+                            text(&mut v, l.as_str(), 3, Rgb565::WHITE);
                             let mut l = Line::<32>::new();
                             let _ = write!(l, "gz {:+.0}", g.z);
-                            text(&mut display, l.as_str(), 4, Rgb565::new(16, 63, 16));
+                            text(&mut v, l.as_str(), 4, Rgb565::new(16, 63, 16));
                         }
                     }
                     None => {
                         if redraw {
-                            text(&mut display, "no IMU driver", 1, Rgb565::new(31, 20, 0));
+                            text(&mut v, "no IMU driver", 1, Rgb565::new(31, 20, 0));
                         }
                     }
                 }
@@ -192,22 +209,24 @@ fn main() -> ! {
                 }
             }
             _ => {
+                let mut v = Viewport::new(&mut display, safe);
+                let vs = v.size();
                 if redraw {
-                    display.clear(Rgb565::new(0, 8, 12)).ok();
+                    v.clear(Rgb565::new(0, 8, 12)).ok();
                 }
                 // Erase the old position, move, draw keyed sprite.
-                display.fill_rect(&Rectangle::new(Point::new(x, y), Size::new(32, 32)), Rgb565::new(0, 8, 12)).ok();
+                v.fill_rect(&Rectangle::new(Point::new(x, y), Size::new(32, 32)), Rgb565::new(0, 8, 12)).ok();
                 x += vx;
                 y += vy;
-                if x < 0 || x + 32 > size.width as i32 {
+                if x < 0 || x + 32 > vs.width as i32 {
                     vx = -vx;
                     x += 2 * vx;
                 }
-                if y < 0 || y + 32 > size.height as i32 {
+                if y < 0 || y + 32 > vs.height as i32 {
                     vy = -vy;
                     y += 2 * vy;
                 }
-                spr.push_keyed(&mut display, Point::new(x, y), Rgb565::MAGENTA).ok();
+                spr.push_keyed(&mut v, Point::new(x, y), Rgb565::MAGENTA).ok();
             }
         }
         // Touch: draw a dot where the panel is touched (every board with touch).

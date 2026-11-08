@@ -3,7 +3,7 @@
 
 use embedded_graphics_core::{
     draw_target::DrawTarget,
-    geometry::{OriginDimensions, Size},
+    geometry::{Dimensions, OriginDimensions, Size},
     pixelcolor::Rgb565,
     primitives::Rectangle,
     Pixel,
@@ -101,6 +101,26 @@ impl FastDraw for AnyDisplay {
 }
 
 impl AnyDisplay {
+    /// The area guaranteed to be visible. For rectangular panels this is the
+    /// whole screen; for StopWatch's round panel it is the even-aligned square
+    /// inscribed in the visible circle (Ø466 centred in the 468×468 frame).
+    /// Draw rectangular layouts through `kumiki_gfx::Viewport::new(&mut display, safe_area)`.
+    pub fn safe_area(&self) -> Rectangle {
+        match self {
+            AnyDisplay::StopWatch(d) => {
+                let s = d.size();
+                let (cx, cy) = (s.width as i32 / 2, s.height as i32 / 2);
+                // side = d / √2 for d = 466 → 329.5, rounded down to even.
+                let side = 466 * 1000 / 1414 & !1;
+                Rectangle::new(
+                    embedded_graphics_core::geometry::Point::new((cx - side / 2) & !1, cy - side / 2),
+                    Size::new(side as u32, side as u32),
+                )
+            }
+            d => d.bounding_box(),
+        }
+    }
+
     /// Send pending changes (frame-buffered displays); no-op for direct ones.
     pub fn flush(&mut self) -> Result<(), BusError> {
         match self {
