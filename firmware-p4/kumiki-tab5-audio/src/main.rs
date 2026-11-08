@@ -214,7 +214,7 @@ fn main() -> ! {
         dout: p.pins.gpio26.into(),
         din: p.pins.gpio28.into(),
     };
-    let mut i2s = match I2s::new(p.i2s0, pins, i2s::Config { sample_rate: FS }) {
+    let mut i2s = match I2s::new(p.i2s0, pins, i2s::Config { sample_rate: FS, ..Default::default() }) {
         Ok(i) => i,
         Err(e) => panic!("i2s: {e:?}"),
     };

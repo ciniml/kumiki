@@ -409,9 +409,11 @@ fn dcs_read(cmd: u8, out: &mut [u8]) -> Result<(), &'static str> {
     for (i, b) in out.iter_mut().enumerate() {
         *b = (word >> (8 * i)) as u8;
     }
-    // Drain anything left.
-    while unsafe { rd(CMD_PKT_STATUS) } & GEN_PLD_R_EMPTY == 0 {
+    // Drain anything left (bounded: the read FIFO is small).
+    let mut left = 64;
+    while unsafe { rd(CMD_PKT_STATUS) } & GEN_PLD_R_EMPTY == 0 && left > 0 {
         unsafe { rd(GEN_PLD_DATA) };
+        left -= 1;
     }
     Ok(())
 }
@@ -657,7 +659,7 @@ impl Dsi {
             Panel::Ili9881c => &ILI9881C_TIMING,
             Panel::St7123 => return Err("panel not supported yet"),
         };
-        if fb % 8 != 0 {
+        if !fb.is_multiple_of(8) {
             return Err("framebuffer not 8-byte aligned");
         }
         unsafe {

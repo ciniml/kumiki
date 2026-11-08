@@ -15,11 +15,13 @@
 //! and only DIN is routed in.
 //!
 //! # Streaming model
-//! Everything is polled; no interrupts. [`I2s::start`] starts both
-//! directions; [`I2s::poll`] does the bookkeeping and is also called by
-//! the data functions, so a program that pushes and pops regularly need
-//! not call it itself. An OS can call `poll` from the DMA EOF interrupt
-//! instead.
+//! Polled by default. [`I2s::start`] starts both directions;
+//! [`I2s::poll`] does the bookkeeping and is also called by the data
+//! functions, so a program that pushes and pops regularly need not call it
+//! itself. An OS can instead route the DMA interrupts
+//! ([`I2s::interrupt_sources`], [`I2s::set_interrupts`]) and call
+//! [`I2s::on_interrupt`] from the handler. The AHB-GDMA channel is the
+//! caller's choice ([`Config::dma_channel`]).
 //!
 //! - TX: a ring of [`TX_DESCS`] descriptors of [`DESC_LEN`] bytes the DMA
 //!   loops over forever. Every descriptor carries `suc_eof`, so the DMA's
@@ -199,11 +201,14 @@ pub struct Config {
     /// Sample rate in Hz (about 611 Hz to 78 kHz: the MCLK divider from
     /// 40 MHz must be at least 2).
     pub sample_rate: u32,
+    /// AHB-GDMA channel (0..[`ahb_dma::CHANNELS`]) for both directions; the
+    /// caller picks one no other driver uses.
+    pub dma_channel: usize,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { sample_rate: 48_000 }
+        Config { sample_rate: 48_000, dma_channel: 0 }
     }
 }
 
@@ -212,6 +217,17 @@ impl Default for Config {
 pub enum Error {
     /// The sample rate cannot be made from 40 MHz.
     SampleRate,
+    /// No such AHB-GDMA channel.
+    DmaChannel,
+}
+
+/// Interrupt-matrix sources of the I2S DMA (rev v1 numbering).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InterruptSources {
+    /// TX direction: raised per TX descriptor sent ([`ahb_dma::TX_INT_EOF`]).
+    pub tx: u32,
+    /// RX direction: raised per RX descriptor closed ([`ahb_dma::RX_INT_SUC_EOF`]).
+    pub rx: u32,
 }
 
 /// The MCLK divider: `SOURCE_HZ / (integer + numerator / denominator)`.
@@ -337,6 +353,9 @@ impl I2s {
     /// Sets up I2S0 and its DMA rings with `pins` at `config`; the bus
     /// stays idle until [`start`](Self::start).
     pub fn new(_inst: I2s0, pins: Pins, config: Config) -> Result<Self, Error> {
+        if config.dma_channel >= ahb_dma::CHANNELS {
+            return Err(Error::DmaChannel);
+        }
         let mclk = config.sample_rate.checked_mul(MCLK_MULTIPLE).ok_or(Error::SampleRate)?;
         let divider = MclkDivider::for_mclk(mclk).ok_or(Error::SampleRate)?;
 
@@ -392,7 +411,9 @@ impl I2s {
 
         // DMA.
         ahb_dma::init();
-        let (tx, rx) = unsafe { (TxChannel::steal(0), RxChannel::steal(0)) };
+        // SAFETY: the caller picked `dma_channel` for this driver alone.
+        let (tx, rx) = unsafe { (TxChannel::steal(config.dma_channel), RxChannel::steal(config.dma_channel)) };
+        let (Some(tx), Some(rx)) = (tx, rx) else { return Err(Error::DmaChannel) };
         // Lines of the rings still in L1 D (from .bss being cleared) must
         // not be written back over them later.
         let (m, n) = (addr_of!(DMA_MEM) as usize, core::mem::size_of::<DmaMem>());
@@ -525,11 +546,47 @@ impl I2s {
         fence(Ordering::SeqCst);
     }
 
+    /// The interrupt-matrix sources of this stream's DMA directions, for
+    /// an OS that routes them to a CPU interrupt.
+    pub fn interrupt_sources(&self) -> InterruptSources {
+        let n = self.tx.number();
+        InterruptSources { tx: ahb_dma::tx_interrupt_source(n), rx: ahb_dma::rx_interrupt_source(n) }
+    }
+
+    /// Enables (or disables) the DMA interrupts: TX on every descriptor
+    /// sent, RX on every descriptor closed (plus descriptor errors), i.e.
+    /// [`DESC_LEN`] bytes apart in each direction. The handler calls
+    /// [`on_interrupt`](Self::on_interrupt). Without them everything works
+    /// by polling, as before.
+    pub fn set_interrupts(&mut self, enable: bool) {
+        let (tx, rx) = if enable {
+            (ahb_dma::TX_INT_EOF | ahb_dma::TX_INT_DSCR_ERR, ahb_dma::RX_INT_SUC_EOF | ahb_dma::RX_INT_DSCR_ERR)
+        } else {
+            (0, 0)
+        };
+        self.tx.clear_int(tx | ahb_dma::TX_INT_EOF);
+        self.rx.clear_int(rx | ahb_dma::RX_INT_SUC_EOF);
+        self.tx.set_int_enable(tx);
+        self.rx.set_int_enable(rx);
+    }
+
+    /// Interrupt handler body: clears this stream's raised DMA interrupt
+    /// bits and does the [`poll`](Self::poll) bookkeeping. Returns the poll
+    /// result (room for TX, data for RX), so the handler can wake the
+    /// tasks waiting for either.
+    pub fn on_interrupt(&mut self) -> Status {
+        let (t, r) = (self.tx.int_status(), self.rx.int_status());
+        self.tx.clear_int(t);
+        self.rx.clear_int(r);
+        self.poll()
+    }
+
     /// Bookkeeping: hands TX descriptors the DMA has finished back to the
     /// program (cleared to silence) and checks the RX ring for an overrun.
     /// Called by every data function; call it at least once per ring
     /// period ([`tx_ring_us`](Self::tx_ring_us)) when not pushing or
-    /// popping. Safe to call from an interrupt handler that owns `self`.
+    /// popping. Safe to call from an interrupt handler that owns `self`
+    /// (see [`on_interrupt`](Self::on_interrupt)).
     pub fn poll(&mut self) -> Status {
         if !self.running {
             return Status::default();
@@ -539,7 +596,7 @@ impl I2s {
         if eof != self.tx_last_eof {
             self.tx_last_eof = eof;
             let base = tx_desc_addr(0);
-            if eof >= base && eof < base + TX_DESCS * 12 && (eof - base) % 12 == 0 {
+            if eof >= base && eof < base + TX_DESCS * 12 && (eof - base).is_multiple_of(12) {
                 let idx = (eof - base) / 12;
                 let cur = (self.tx_done % TX_DESCS as u64) as usize;
                 let n = (idx + TX_DESCS - cur) % TX_DESCS + 1;

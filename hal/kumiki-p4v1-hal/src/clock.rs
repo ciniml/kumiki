@@ -236,7 +236,12 @@ unsafe fn rescale(cpu: u32, mem: u32, sys: u32, apb: u32, up: bool) {
             core::ptr::write_volatile(addr as *mut u32, (r & !(0xFF << shift)) | (v << shift));
             let c0 = core::ptr::read_volatile(ROOT_CLK_CTRL0 as *const u32);
             core::ptr::write_volatile(ROOT_CLK_CTRL0 as *mut u32, c0 | SOC_CLK_DIV_UPDATE);
-            while core::ptr::read_volatile(ROOT_CLK_CTRL0 as *const u32) & SOC_CLK_DIV_UPDATE != 0 {}
+            // Bounded: runs from RAM with no timer at hand (the update takes
+            // a few clock cycles).
+            let mut spins = 0u32;
+            while core::ptr::read_volatile(ROOT_CLK_CTRL0 as *const u32) & SOC_CLK_DIV_UPDATE != 0 && spins < 1_000_000 {
+                spins += 1;
+            }
         }
     }
     unsafe {

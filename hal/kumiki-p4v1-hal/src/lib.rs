@@ -115,13 +115,21 @@ pub(crate) fn set_bits_field(addr: usize, shift: u32, width: u32, v: u32) {
     unsafe { wr(addr, (rd(addr) & !mask) | ((v << shift) & mask)) }
 }
 
-/// Polls `done` for up to `us` microseconds; false on timeout.
+/// Polls `done` for up to `us` microseconds; false on timeout (also if
+/// SYSTIMER has stopped, so this never hangs).
 pub(crate) fn wait_us(us: u64, mut done: impl FnMut() -> bool) -> bool {
     let end = time::now() + us * time::TICKS_PER_US;
+    let (mut last, mut same) = (0u64, 0u32);
     while !done() {
-        if time::now() > end {
+        let t = time::now();
+        if t > end {
             return false;
         }
+        same = if t == last { same + 1 } else { 0 };
+        if same >= 100_000 {
+            return false;
+        }
+        last = t;
     }
     true
 }

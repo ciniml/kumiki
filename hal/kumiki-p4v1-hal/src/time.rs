@@ -23,19 +23,27 @@ pub fn init() {
 
 /// Ticks (1/16 µs) since reset.
 pub fn now() -> u64 {
-    // systimer_hal_get_counter_value(): snapshot, then read lo/hi/lo until lo is stable.
+    // systimer_hal_get_counter_value(): snapshot, then read lo/hi/lo until lo
+    // is stable. Both waits are bounded (a few hundred reads; the snapshot
+    // takes a couple of SYSTIMER cycles): this runs with an OS's locks held,
+    // so a SYSTIMER that never answers must not hang the caller.
     unsafe {
         wr(SYSTIMER_UNIT0_OP, SYSTIMER_UNIT0_UPDATE);
-        while rd(SYSTIMER_UNIT0_OP) & SYSTIMER_UNIT0_VALUE_VALID == 0 {}
+        let mut spins = 0;
+        while rd(SYSTIMER_UNIT0_OP) & SYSTIMER_UNIT0_VALUE_VALID == 0 && spins < 1000 {
+            spins += 1;
+        }
         let mut lo = rd(SYSTIMER_UNIT0_VALUE_LO);
-        loop {
-            let hi = rd(SYSTIMER_UNIT0_VALUE_HI);
+        let mut hi = rd(SYSTIMER_UNIT0_VALUE_HI);
+        for _ in 0..4 {
             let lo2 = rd(SYSTIMER_UNIT0_VALUE_LO);
             if lo2 == lo {
-                return ((hi as u64) << 32) | lo as u64;
+                break;
             }
             lo = lo2;
+            hi = rd(SYSTIMER_UNIT0_VALUE_HI);
         }
+        ((hi as u64) << 32) | lo as u64
     }
 }
 
@@ -44,10 +52,33 @@ pub fn now_us() -> u64 {
     now() / TICKS_PER_US
 }
 
+/// Reads of an unchanged counter after which SYSTIMER is taken to have
+/// stopped (it advances every 62.5 ns; one read takes far longer than that
+/// times this many reads would allow).
+const STALLED_READS: u32 = 100_000;
+
+/// Waits until `now() >= end`, or until the counter stops advancing (a
+/// stopped SYSTIMER must not hang the caller). Returns false in that case.
+pub(crate) fn wait_until(end: u64) -> bool {
+    let (mut last, mut same) = (now(), 0u32);
+    while last < end {
+        let t = now();
+        if t == last {
+            same += 1;
+            if same >= STALLED_READS {
+                return false;
+            }
+        } else {
+            same = 0;
+        }
+        last = t;
+    }
+    true
+}
+
 /// Busy-waits `us` microseconds.
 pub fn delay_us(us: u64) {
-    let end = now() + us * TICKS_PER_US;
-    while now() < end {}
+    wait_until(now() + us * TICKS_PER_US);
 }
 
 /// The CPU clock, measured: `mcycle` against SYSTIMER over 1 ms.
@@ -59,10 +90,10 @@ pub(crate) fn measure_cpu_hz() -> u32 {
     };
     let t0 = now();
     let c0 = mcycle();
-    while now() - t0 < 1000 * TICKS_PER_US {}
+    wait_until(t0 + 1000 * TICKS_PER_US);
     let c1 = mcycle();
     let t1 = now();
-    (c1.wrapping_sub(c0) as u64 * 1_000_000 * TICKS_PER_US / (t1 - t0)) as u32
+    (c1.wrapping_sub(c0) as u64 * 1_000_000 * TICKS_PER_US / (t1 - t0).max(1)) as u32
 }
 
 /// Busy-wait delay (embedded-hal `DelayNs`).
@@ -71,7 +102,6 @@ pub struct Delay;
 
 impl embedded_hal::delay::DelayNs for Delay {
     fn delay_ns(&mut self, ns: u32) {
-        let end = now() + (ns as u64 * TICKS_PER_US).div_ceil(1000);
-        while now() < end {}
+        wait_until(now() + (ns as u64 * TICKS_PER_US).div_ceil(1000));
     }
 }

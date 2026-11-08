@@ -448,6 +448,8 @@ pub mod tab5 {
         pub const BCLK_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 27, active_low: false }];
         pub const DIN_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 28, active_low: false }];
         pub const DOUT_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 26, active_low: false }];
+        /// AHB-GDMA channel 0-2 (default 0)
+        pub const DMA_CHANNEL: Option<u32> = None;
         pub const INSTANCE: &str = "i2s0";
         /// sample rate in Hz (default 48000)
         pub const SAMPLE_RATE: Option<u32> = Some(48000);
@@ -534,7 +536,10 @@ pub mod tab5 {
                 dout: pins.i2s0_dout.degrade(),
                 din: pins.i2s0_din.degrade(),
             };
-            let cfg = I2sConfig { sample_rate: i2s0::SAMPLE_RATE.unwrap_or(48_000) };
+            let cfg = I2sConfig {
+                sample_rate: i2s0::SAMPLE_RATE.unwrap_or(48_000),
+                dma_channel: i2s0::DMA_CHANNEL.unwrap_or(0) as usize,
+            };
             let mut i2s = I2s::new(p.i2s0, pins, cfg).map_err(|_| InitError::Config)?;
             i2s.start();
             delay.delay_ms(10);

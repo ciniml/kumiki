@@ -16,7 +16,7 @@ pub fn i2c_read_reg(_p: &mut Peripherals, inst: &str, sda: u8, scl: u8, addr: u8
     // SAFETY: `_p` is borrowed mutably, so nothing else uses the
     // controller or the pins while the probe runs; the handles are dropped
     // before returning, and the real driver reconfigures everything.
-    let (sda, scl) = unsafe { (AnyPin::steal(sda), AnyPin::steal(scl)) };
+    let (Some(sda), Some(scl)) = (unsafe { AnyPin::steal(sda) }, unsafe { AnyPin::steal(scl) }) else { return None };
     let mut i2c = match inst {
         "i2c0" => I2c::new(unsafe { I2c0::steal() }, sda, scl, 100_000),
         _ => I2c::new(unsafe { I2c1::steal() }, sda, scl, 100_000),

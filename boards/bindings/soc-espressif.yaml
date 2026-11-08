@@ -113,7 +113,10 @@
               dout: ${pin:dout-gpios}.degrade(),
               din: ${pin:din-gpios}.degrade(),
           };
-          let cfg = I2sConfig { sample_rate: ${const:SAMPLE_RATE}.unwrap_or(48_000) };
+          let cfg = I2sConfig {
+              sample_rate: ${const:SAMPLE_RATE}.unwrap_or(48_000),
+              dma_channel: ${const:DMA_CHANNEL}.unwrap_or(0) as usize,
+          };
           let mut i2s = I2s::new(${instance}, pins, cfg).map_err(|_| InitError::Config)?;
           i2s.start();
           delay.delay_ms(10);
@@ -128,6 +131,7 @@
     dout-gpios: { type: gpios, required: true }
     din-gpios: { type: gpios, required: true }
     kumiki,sample-rate: { type: int, description: "sample rate in Hz (default 48000)" }
+    kumiki,dma-channel: { type: int, description: "AHB-GDMA channel 0-2 (default 0)" }
 
 - compatible: "espressif,esp32p4-dsi"
   kumiki:

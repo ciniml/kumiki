@@ -60,13 +60,12 @@ impl AnyPin {
         self.0
     }
 
-    /// A pin by number.
+    /// A pin by number; `None` if there is no such GPIO.
     ///
     /// # Safety
     /// The caller must make sure nothing else uses the pin.
-    pub unsafe fn steal(n: u8) -> Self {
-        assert!(n < NUM_PINS);
-        AnyPin(n)
+    pub unsafe fn steal(n: u8) -> Option<Self> {
+        (n < NUM_PINS).then_some(AnyPin(n))
     }
 
     fn mask(&self) -> (usize, usize, usize, u32) {

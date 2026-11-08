@@ -132,6 +132,17 @@ tab5-os（特権分離のあるマイクロカーネル）でも kumiki を使�
   - 診断用のビルド（`kumiki-tab5-audio-bisect`）で、ボード初期化の手順を 1 つずつ足しながらビープ音を鳴らして絞り込んだ。手順そのものはどれも原因ではなく、順序だけが原因だった。なぜ順序が効くのかは、まだ分かっていない。
   - 対策: ES8388 を先に設定し、画面の電源投入は出力レジスタの SPK_EN（ビット 1）を残すようにした。直した後、共通のデモでマイク（48007 フレーム/秒）と、スピーカーの初期化を確認した。
 
+### OS のカーネル向けの整理、第 2 段（tab5-os の依頼 1〜5、2026-11-09）
+
+- **割り込み**: `ahb_dma` に、チャネルごとの割り込みの有効化（`set_int_enable`）と状態の読み出し（`int_status`）、割り込み源の番号（rev v1 は IN_CHn = 56+n、OUT_CHn = 59+n。`interrupt_core0_reg.h` の hw_ver1 で確かめた。IDF の `interrupts.h` は v3 用で 1 つずれている）を足した。`I2s` には `interrupt_sources()` / `set_interrupts(bool)` / `on_interrupt()`（割り込みの要因を消して `poll` を呼ぶ）を足した。
+- **DMA チャネルの選択**: `i2s::Config::dma_channel`（DT では `kumiki,dma-channel`、既定は 0）。`ahb_dma::init()` は、AHB-GDMA のクロックがすでに入っていれば（ほかの誰かが使っていれば）ブロック全体をリセットしない。メモリの窓も広げるだけで、狭めない。
+- **終わりのない待ちをなくした**:
+  - SYSTIMER の値の確定待ち、値が安定するまでの再読み出し、クロックの分周の更新待ち（RAM で動くので回数で制限）、DSI の読み出し FIFO の掃き出し、`DsiPanel::present` のフレーム待ち（200ms でエラー）に上限を付けた。
+  - 時間で待つループ（`delay_us`、`DelayNs`、`wait_us`）は、SYSTIMER が止まっていたら抜ける。
+- **パニックをエラーに**: `AnyPin::steal`、`TxChannel::steal`、`RxChannel::steal` は、範囲外なら `None` を返す（`assert!` をやめた）。HAL に残る `assert!` は、コンパイル時のもの（アプリ記述子の大きさ）だけになった。
+- **共有のクロックのレジスタ**: HP_SYS_CLKRST / LP_CLKRST / PMU の書き込みは、もともとすべて読んで一部だけ変える形だった（確認だけ）。
+- 実機の確認はまだ（Tab5 は tab5-os が使っている）。ビルドは、`--no-default-features` を付けた場合と付けない場合のどちらも、riscv32imac / imafc で通る。
+
 ## 書き込みについて
 
 - Tab5 に書き込むと、いま入っている tab5-os のカーネル（0x10000）が上書きされる。tab5-os の `make flash-p4` で戻せる。

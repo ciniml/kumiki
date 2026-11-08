@@ -32,7 +32,7 @@ const INTR_MEM_END: usize = BASE + 0x3C8;
 // Per channel (stride 0xC0 for the configuration blocks, 0x10 for the
 // interrupt blocks, 4 for the link address registers).
 const fn in_int(n: usize) -> usize {
-    BASE + 0x00 + 0x10 * n
+    BASE + 0x10 * n
 }
 const fn out_int(n: usize) -> usize {
     BASE + 0x30 + 0x10 * n
@@ -52,6 +52,7 @@ const fn out_link_addr(n: usize) -> usize {
 
 // Interrupt block offsets.
 const INT_RAW: usize = 0x0;
+const INT_ST: usize = 0x4;
 const INT_ENA: usize = 0x8;
 const INT_CLR: usize = 0xC;
 
@@ -148,27 +149,68 @@ impl Descriptor {
 
 static mut READY: bool = false;
 
-/// Turns the AHB GDMA's clock on and resets it (once; later calls do
-/// nothing). Channels in use by others would be disturbed by the reset, so
-/// it is done only the first time.
+/// Makes the AHB GDMA usable (once; later calls do nothing).
+///
+/// If its bus clock is still off, nobody uses it yet: the clock is turned
+/// on and the block reset. If the clock is already on (an OS, or other
+/// drivers, run channels of their own), nothing is reset; channels are
+/// reset one by one in `configure`. The DMA's memory window is only ever
+/// widened to cover L2MEM (0x4000_0000..0x4FFC_0000), never narrowed.
 pub fn init() {
     if unsafe { READY } {
         return;
     }
-    set_bits(SOC_CLK_CTRL1, AHB_PDMA_SYS_CLK_EN);
-    set_bits(HP_RST_EN1, RST_EN_AHB_PDMA);
-    clear_bits(HP_RST_EN1, RST_EN_AHB_PDMA);
-    // ahb_dma_ll_force_enable_reg_clock, ahb_dma_ll_reset_fsm,
-    // ahb_dma_ll_set_default_memory_range.
-    set_bits(MISC_CONF, MISC_CLK_EN);
-    set_bits(MISC_CONF, MISC_AHBM_RST_INTER);
-    clear_bits(MISC_CONF, MISC_AHBM_RST_INTER);
+    let clocked = unsafe { rd(SOC_CLK_CTRL1) } & AHB_PDMA_SYS_CLK_EN != 0;
+    if !clocked {
+        set_bits(SOC_CLK_CTRL1, AHB_PDMA_SYS_CLK_EN);
+        set_bits(HP_RST_EN1, RST_EN_AHB_PDMA);
+        clear_bits(HP_RST_EN1, RST_EN_AHB_PDMA);
+        // ahb_dma_ll_force_enable_reg_clock, ahb_dma_ll_reset_fsm.
+        set_bits(MISC_CONF, MISC_CLK_EN);
+        set_bits(MISC_CONF, MISC_AHBM_RST_INTER);
+        clear_bits(MISC_CONF, MISC_AHBM_RST_INTER);
+    } else {
+        set_bits(MISC_CONF, MISC_CLK_EN);
+    }
+    // ahb_dma_ll_set_default_memory_range, as a union with what is set.
     unsafe {
-        wr(INTR_MEM_START, 0x4000_0000);
-        wr(INTR_MEM_END, 0x4FFC_0000);
+        let (start, end) = (rd(INTR_MEM_START), rd(INTR_MEM_END));
+        if !clocked || start > 0x4000_0000 || start == 0 {
+            wr(INTR_MEM_START, if clocked && start != 0 { start.min(0x4000_0000) } else { 0x4000_0000 });
+        }
+        if !clocked || end < 0x4FFC_0000 {
+            wr(INTR_MEM_END, if clocked { end.max(0x4FFC_0000) } else { 0x4FFC_0000 });
+        }
         READY = true;
     }
 }
+
+/// Number of channels (each with a TX and an RX direction).
+pub const CHANNELS: usize = 3;
+
+/// Interrupt-matrix source of the RX direction of channel `n` on rev v1
+/// (`INTERRUPT_CORE0_AHB_PDMA_IN_CHn_INT_MAP_REG` at 0xE0 + 4n of
+/// `interrupt_core0_reg.h`, hw_ver1; ESP-IDF's `interrupts.h` enum is for
+/// rev v3 and one higher).
+pub const fn rx_interrupt_source(n: usize) -> u32 {
+    56 + n as u32
+}
+
+/// Interrupt-matrix source of the TX direction of channel `n` on rev v1
+/// (map register at 0xEC + 4n).
+pub const fn tx_interrupt_source(n: usize) -> u32 {
+    59 + n as u32
+}
+
+/// TX interrupt bit: a descriptor with `suc_eof` has been sent (`OUT_EOF`).
+pub const TX_INT_EOF: u32 = 1 << 1;
+/// TX interrupt bit: descriptor error (`OUT_DSCR_ERR`).
+pub const TX_INT_DSCR_ERR: u32 = 1 << 2;
+/// RX interrupt bit: a descriptor was closed on a successful EOF
+/// (`IN_SUC_EOF`).
+pub const RX_INT_SUC_EOF: u32 = 1 << 1;
+/// RX interrupt bit: descriptor error (`IN_DSCR_ERR`).
+pub const RX_INT_DSCR_ERR: u32 = 1 << 3;
 
 /// TX (memory to peripheral) direction of channel `n` (0..=2).
 pub struct TxChannel(usize);
@@ -177,13 +219,27 @@ pub struct TxChannel(usize);
 pub struct RxChannel(usize);
 
 impl TxChannel {
-    /// The TX direction of channel `n`.
+    /// The TX direction of channel `n`; `None` if there is no such channel.
     ///
     /// # Safety
     /// Nothing else may use it meanwhile.
-    pub unsafe fn steal(n: usize) -> Self {
-        assert!(n < 3);
-        TxChannel(n)
+    pub unsafe fn steal(n: usize) -> Option<Self> {
+        (n < CHANNELS).then_some(TxChannel(n))
+    }
+
+    /// The channel number.
+    pub fn number(&self) -> usize {
+        self.0
+    }
+
+    /// Enables exactly the interrupt bits `bits` (`TX_INT_*`; 0 = none).
+    pub fn set_int_enable(&self, bits: u32) {
+        unsafe { wr(out_int(self.0) + INT_ENA, bits) }
+    }
+
+    /// Enabled-and-raised interrupt bits (`OUT_INT_ST`).
+    pub fn int_status(&self) -> u32 {
+        unsafe { rd(out_int(self.0) + INT_ST) }
     }
 
     /// Stops and resets the channel and connects it to peripheral `peri`
@@ -249,13 +305,27 @@ impl TxChannel {
 }
 
 impl RxChannel {
-    /// The RX direction of channel `n`.
+    /// The RX direction of channel `n`; `None` if there is no such channel.
     ///
     /// # Safety
     /// Nothing else may use it meanwhile.
-    pub unsafe fn steal(n: usize) -> Self {
-        assert!(n < 3);
-        RxChannel(n)
+    pub unsafe fn steal(n: usize) -> Option<Self> {
+        (n < CHANNELS).then_some(RxChannel(n))
+    }
+
+    /// The channel number.
+    pub fn number(&self) -> usize {
+        self.0
+    }
+
+    /// Enables exactly the interrupt bits `bits` (`RX_INT_*`; 0 = none).
+    pub fn set_int_enable(&self, bits: u32) {
+        unsafe { wr(in_int(self.0) + INT_ENA, bits) }
+    }
+
+    /// Enabled-and-raised interrupt bits (`IN_INT_ST`).
+    pub fn int_status(&self) -> u32 {
+        unsafe { rd(in_int(self.0) + INT_ST) }
     }
 
     /// Stops and resets the channel and connects it to peripheral `peri`

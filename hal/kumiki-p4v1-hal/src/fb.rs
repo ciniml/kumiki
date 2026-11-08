@@ -173,8 +173,13 @@ impl FramebufferPanel for DsiPanel {
         let next = 3 - old_front - shown;
         if self.dsi.frames().wrapping_sub(self.retired_at[next]) < RETIRE_FRAMES {
             self.waits += 1;
+            // Two frames are ~31 ms; give up after 200 ms (the scan-out stopped).
+            let end = crate::time::now() + 200_000 * crate::time::TICKS_PER_US;
             while self.dsi.frames().wrapping_sub(self.retired_at[next]) < RETIRE_FRAMES {
                 self.dsi.service();
+                if crate::time::now() > end {
+                    return Err(PpaError("display scan-out stalled"));
+                }
             }
         }
         self.presents += 1;
