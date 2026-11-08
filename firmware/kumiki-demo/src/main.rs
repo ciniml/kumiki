@@ -105,6 +105,8 @@ fn main() -> ! {
 
     let mut btn = Buttons::default();
     let mut page = 0u8;
+    // Boards with touch get a 4th page: touch calibration targets.
+    let pages: u8 = if touch.is_some() { 4 } else { 3 };
     let mut redraw = true;
     let mut frame = 0i32;
     let (mut touch_ok, mut touch_err, mut touch_max) = (0u32, 0u32, 0usize);
@@ -115,7 +117,7 @@ fn main() -> ! {
         let raw = buttons.raw(touch.as_mut());
         btn.update(raw, now, |e| {
             if e.kind == ButtonKind::Click {
-                page = (page + 1) % 3;
+                page = (page + 1) % pages;
                 redraw = true;
                 println!("button {:?} click -> page {}", e.id, page);
             }
@@ -166,6 +168,29 @@ fn main() -> ! {
                     }
                 }
             }
+            3 => {
+                // Touch test: crosshairs at the centre and ±(size/4) diagonally.
+                if redraw {
+                    display.clear(Rgb565::BLACK).ok();
+                    let c = Point::new(size.width as i32 / 2, size.height as i32 / 2);
+                    let d = size.width.min(size.height) as i32 / 4;
+                    for t in [c, c - Point::new(d, d), c + Point::new(d, d)] {
+                        let style = PrimitiveStyle::with_stroke(Rgb565::GREEN, 1);
+                        embedded_graphics::primitives::Line::new(t - Point::new(10, 0), t + Point::new(10, 0))
+                            .into_styled(style)
+                            .draw(&mut display)
+                            .ok();
+                        embedded_graphics::primitives::Line::new(t - Point::new(0, 10), t + Point::new(0, 10))
+                            .into_styled(style)
+                            .draw(&mut display)
+                            .ok();
+                        let mut l = Line::<16>::new();
+                        let _ = write!(l, "{},{}", t.x, t.y);
+                        let style = MonoTextStyleBuilder::new().font(&FONT_6X10).text_color(Rgb565::GREEN).build();
+                        Text::new(l.as_str(), t + Point::new(12, -4), style).draw(&mut display).ok();
+                    }
+                }
+            }
             _ => {
                 if redraw {
                     display.clear(Rgb565::new(0, 8, 12)).ok();
@@ -209,6 +234,18 @@ fn main() -> ! {
                 }
                 if n > 0 && frame % 10 == 0 {
                     println!("touch: {} point(s), first at ({}, {})", n, pts[0].x, pts[0].y);
+                }
+                if n > 0 && page == 3 {
+                    // Show the reported coordinate in the middle (readable on round panels).
+                    let c = Point::new(size.width as i32 / 2, size.height as i32 / 2);
+                    let mut l = Line::<24>::new();
+                    let _ = write!(l, "touch {:4},{:4}", pts[0].x, pts[0].y);
+                    let style = MonoTextStyleBuilder::new()
+                        .font(font_for(&display))
+                        .text_color(Rgb565::YELLOW)
+                        .background_color(Rgb565::BLACK)
+                        .build();
+                    Text::new(l.as_str(), c + Point::new(-75, 40), style).draw(&mut display).ok();
                 }
             }
         }
