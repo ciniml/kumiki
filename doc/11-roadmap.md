@@ -107,7 +107,7 @@
 
 | 共通化の確認 | アプリ本体を HAL から独立させ（`firmware/kumiki-demo/src/app.rs`）、`Any*` を生成に切り替えた後のバイナリで、CoreS3 / AtomS3 / StopWatch / Tab5 の 4 機種の判別と初期化を確認した（2026-11-08） |
 
-| M5（進行中） | スプライトの回転・拡大縮小（`Sprite::push_rotate_zoom`、M5GFX の `pushRotateZoom` 相当）。RTC（`kumiki-class::Rtc`、`kumiki-rtc` に PCF8563 / BM8563 と RX8130、DT の `chosen { kumiki,rtc }` から生成）。Tab5 の RX8130 と CoreS3 の BM8563 の両方で、読み出しと時刻の進みを確認した（CoreS3 は以前に設定された正しい時刻を保持していた）。オーディオ出力（`kumiki-class::Speaker`、CoreS3 の AW88298 + esp-hal の I2S DMA ストリーム、DT から生成）で、CoreS3 から音が出ることを確認した。残り：マイク（ES7210）、Tab5 のオーディオ（P4 v1 の I2S と ES8388） |
+| M5（進行中） | スプライトの回転・拡大縮小（`Sprite::push_rotate_zoom`、M5GFX の `pushRotateZoom` 相当）。RTC（`kumiki-class::Rtc`、`kumiki-rtc` に PCF8563 / BM8563 と RX8130、DT の `chosen { kumiki,rtc }` から生成）。Tab5 の RX8130 と CoreS3 の BM8563 の両方で、読み出しと時刻の進みを確認した（CoreS3 は以前に設定された正しい時刻を保持していた）。オーディオ出力（`kumiki-class::Speaker`、CoreS3 の AW88298 + esp-hal の I2S DMA ストリーム、DT から生成）で、CoreS3 から音が出ることを確認した。マイク（`kumiki-class::Microphone`、CoreS3 の ES7210）も入れ、声でレベルが動くことを確認した。I2S1 を全二重（RX が TX の BCK / WS を共有）で使い、スピーカーとマイクを同時に動かす。残り：入力のフレーム数が設定の 48kHz より約 3% 少ない（46.6k/s）原因の切り分け、Tab5 のオーディオ（P4 v1 の I2S と ES8388 / ES7210） |
 
 ### 実機で分かったこと
 
@@ -115,6 +115,7 @@
 - **I2C バスリカバリ**：IMU などは MCU のリセット後も電源が入ったままなので、内部 I2C の初期化前に SCL を最大 9 クロック出してから STOP を出す。
 - **Octal PSRAM 内蔵チップでは GPIO33〜37 に触らない**：eFuse の `PSRAM_CAP` で判定し、該当する判別候補（CoreS3 / AtomS3）を飛ばす（M5GFX の `touches_opi_pins` と同じ考え方）。
 - **StopWatch のタッチ**：個体によって CST820 と CST9217 がある。CST820 の座標は、M5GFX の設定（0〜233 を 2 倍）とは合わなかった。3 点の実測値から、Linux DT の `touchscreen-min-*` / `touchscreen-size-*` と同じ形の補正値を求めた。補正値は DTS に書けるようにする（[07](07-design-hwdesc.md)）。
+- **esp-hal の I2S 受信（ESP32-S3）**：`I2sRxDmaTransfer::is_done()` は、一度立つと消えない RX_DONE の割り込みフラグを読むので、ストリームが止まったかどうかの判定には使えない（「一定時間データが来ない」で判定する）。また `DmaRxStreamBuf` は、DMA の先読みを考えて区切り（ディスクリプタ）を細かくしないと、空きがあっても DMA が止まる（16000 バイトを 4 区切りでは止まり、16 区切りで連続した）。
 - **小さな描画の固定費**：esp-hal の DMA 転送の起動には数 µs かかるため、64 バイト以下は SPI の FIFO から直接送る（`fifo-esp32s3`）。
 
 ## 確認していただきたい事項
