@@ -45,6 +45,10 @@ impl<P: Panel> Display<P> {
     pub fn into_panel(self) -> P {
         self.panel
     }
+    /// Transform the panel (e.g. switch its bus to `async`).
+    pub fn map_panel<P2: Panel>(self, f: impl FnOnce(P) -> P2) -> Display<P2> {
+        Display { panel: f(self.panel) }
+    }
 }
 
 impl<P: Panel> OriginDimensions for Display<P> {

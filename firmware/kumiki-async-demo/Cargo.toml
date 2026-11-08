@@ -1,0 +1,34 @@
+[package]
+name = "kumiki-async-demo"
+description = "Executor-agnostic async display demo: the same app on a hand-written block_on and on embassy"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[[bin]]
+name = "blockon"
+path = "src/bin/blockon.rs"
+
+[[bin]]
+name = "embassy"
+path = "src/bin/embassy.rs"
+required-features = ["embassy"]
+
+[features]
+default = ["embassy"]
+embassy = ["dep:esp-rtos", "dep:embassy-executor", "dep:static_cell"]
+
+[dependencies]
+kumiki-boards = { path = "../../boards/kumiki-boards", features = ["chip-esp32s3"] }
+kumiki-gfx = { path = "../../gfx/kumiki-gfx" }
+embedded-graphics = "0.8"
+critical-section = "1"
+esp-hal = { version = "1.2", features = ["esp32s3", "unstable"] }
+esp-backtrace = { version = "0.20", features = ["esp32s3", "panic-handler", "println"] }
+esp-println = { version = "0.18", features = ["esp32s3"] }
+esp-bootloader-esp-idf = { version = "0.6", features = ["esp32s3"] }
+# embassy variant only
+esp-rtos = { version = "0.4", features = ["esp32s3", "embassy"], optional = true }
+embassy-executor = { version = "0.10", optional = true }
+static_cell = { version = "2", optional = true }

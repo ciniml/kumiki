@@ -131,6 +131,24 @@ impl<B, M: Model, RST: OutputPin> DcsPanel<B, M, RST> {
         (self.bus, self.reset)
     }
 
+    /// Replace the bus (e.g. blocking → `async` after a blocking `init`),
+    /// keeping rotation, geometry and the window cache.
+    pub fn map_bus<B2>(self, f: impl FnOnce(B) -> B2) -> DcsPanel<B2, M, RST> {
+        DcsPanel {
+            bus: f(self.bus),
+            cfg: self.cfg,
+            reset: self.reset,
+            internal_rotation: self.internal_rotation,
+            width: self.width,
+            height: self.height,
+            colstart: self.colstart,
+            rowstart: self.rowstart,
+            cache_x: self.cache_x,
+            cache_y: self.cache_y,
+            _m: PhantomData,
+        }
+    }
+
     /// Board configuration in use.
     pub fn config(&self) -> &DcsConfig {
         &self.cfg

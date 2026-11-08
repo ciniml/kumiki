@@ -86,7 +86,7 @@ fn main() -> ! {
         Ok(d) => d,
         Err(e) => panic!("board init failed: {e:?}"),
     };
-    let Devices { board, mut display, mut backlight, mut touch, mut imu, mut power, mut buttons } = dev;
+    let Devices { board, mut display, mut backlight, mut touch, mut imu, mut power, mut buttons, .. } = dev;
     println!(
         "kumiki-demo: detected {} (touch: {}, imu: {}, power: {})",
         board.name(),

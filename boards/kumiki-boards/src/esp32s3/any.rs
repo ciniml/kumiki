@@ -10,11 +10,11 @@ use embedded_graphics_core::{
 };
 use esp_hal::gpio::Output;
 use kumiki_class::{Backlight, Imu, Power, Touch, TouchPoint, Vec3};
-use kumiki_gfx::{FastDraw, PixelFormat, Rgb565Be};
+use kumiki_gfx::{AsyncFastDraw, FastDraw, PixelFormat, Rgb565Be};
 use kumiki_gfx_bus_esp::Error as BusError;
 use kumiki_mpu6886::Mpu6886;
 
-use super::{AtomS3Display, CoreS3Display, I2cBus, SharedI2c, chips};
+use super::{AtomS3AsyncDisplay, AtomS3Display, CoreS3AsyncDisplay, CoreS3Display, I2cBus, SharedI2c, chips};
 
 /// Display of any board in the family.
 pub enum AnyDisplay {
@@ -64,6 +64,52 @@ impl FastDraw for AnyDisplay {
     }
     fn blit<S: PixelFormat>(&mut self, area: &Rectangle, src: &[u8], stride_px: usize) -> Result<(), BusError> {
         each_display!(self, d => d.blit::<S>(area, src, stride_px))
+    }
+}
+
+impl AnyDisplay {
+    /// Switch the display to `async` operation (DMA completion via interrupt +
+    /// waker, executor-agnostic). Draw into a [`kumiki_gfx::Sprite`] and push it
+    /// with [`kumiki_gfx::AsyncFastDraw`].
+    pub fn into_async(self) -> AnyAsyncDisplay {
+        match self {
+            AnyDisplay::CoreS3(d) => AnyAsyncDisplay::CoreS3(d.map_panel(|p| p.map_bus(|b| b.into_async()))),
+            AnyDisplay::AtomS3(d) => AnyAsyncDisplay::AtomS3(d.map_panel(|p| p.map_bus(|b| b.into_async()))),
+        }
+    }
+}
+
+/// `async` display of any board in the family.
+pub enum AnyAsyncDisplay {
+    /// CoreS3: ILI9342C 320×240.
+    CoreS3(CoreS3AsyncDisplay),
+    /// AtomS3: GC9107 128×128.
+    AtomS3(AtomS3AsyncDisplay),
+}
+
+impl AsyncFastDraw for AnyAsyncDisplay {
+    type Format = Rgb565Be;
+    type Error = BusError;
+
+    fn size(&self) -> Size {
+        match self {
+            AnyAsyncDisplay::CoreS3(d) => AsyncFastDraw::size(d),
+            AnyAsyncDisplay::AtomS3(d) => AsyncFastDraw::size(d),
+        }
+    }
+
+    async fn fill_rect(&mut self, area: &Rectangle, color: Rgb565) -> Result<(), BusError> {
+        match self {
+            AnyAsyncDisplay::CoreS3(d) => AsyncFastDraw::fill_rect(d, area, color).await,
+            AnyAsyncDisplay::AtomS3(d) => AsyncFastDraw::fill_rect(d, area, color).await,
+        }
+    }
+
+    async fn blit<S: PixelFormat>(&mut self, area: &Rectangle, src: &[u8], stride_px: usize) -> Result<(), BusError> {
+        match self {
+            AnyAsyncDisplay::CoreS3(d) => AsyncFastDraw::blit::<S>(d, area, src, stride_px).await,
+            AnyAsyncDisplay::AtomS3(d) => AsyncFastDraw::blit::<S>(d, area, src, stride_px).await,
+        }
     }
 }
 

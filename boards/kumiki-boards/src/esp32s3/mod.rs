@@ -39,7 +39,7 @@ use kumiki_gfx_panels::{DcsConfig, DcsPanel, Gc9107, Ili9342c, NoPin};
 use kumiki_mpu6886::Mpu6886;
 use static_cell::StaticCell;
 
-pub use any::{AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyTouch};
+pub use any::{AnyAsyncDisplay, AnyBacklight, AnyDisplay, AnyImu, AnyPower, AnyTouch};
 
 /// Blocking I²C master.
 pub type I2cBus = I2c<'static, Blocking>;
@@ -51,6 +51,12 @@ pub type PanelBus = EspSpiDmaBus<'static, Blocking>;
 pub type CoreS3Display = Display<DcsPanel<PanelBus, Ili9342c>>;
 /// AtomS3 display.
 pub type AtomS3Display = Display<DcsPanel<PanelBus, Gc9107>>;
+/// `async` panel bus.
+pub type AsyncPanelBus = EspSpiDmaBus<'static, esp_hal::Async>;
+/// CoreS3 display, `async`.
+pub type CoreS3AsyncDisplay = Display<DcsPanel<AsyncPanelBus, Ili9342c>>;
+/// AtomS3 display, `async`.
+pub type AtomS3AsyncDisplay = Display<DcsPanel<AsyncPanelBus, Gc9107>>;
 
 const CORES3: bool = cfg!(feature = "board-m5stack-cores3") || !cfg!(any(feature = "board-m5stack-atoms3"));
 const ATOMS3: bool = cfg!(feature = "board-m5stack-atoms3") || !cfg!(any(feature = "board-m5stack-cores3"));
@@ -118,6 +124,48 @@ pub struct Devices {
     pub power: Option<AnyPower>,
     /// Button raw-state source.
     pub buttons: ButtonInputs,
+    /// Peripherals the board definition does not use, handed back to the
+    /// application (timers and software interrupts for an RTOS/executor,
+    /// radio, RNG, second core, ...).
+    pub spare: Spare,
+}
+
+/// Peripherals not used by any board of this family.
+#[allow(missing_docs)]
+pub struct Spare {
+    pub timg0: esp_hal::peripherals::TIMG0<'static>,
+    pub timg1: esp_hal::peripherals::TIMG1<'static>,
+    pub systimer: esp_hal::peripherals::SYSTIMER<'static>,
+    pub from_cpu_intr0: esp_hal::peripherals::FROM_CPU_INTR0<'static>,
+    pub from_cpu_intr1: esp_hal::peripherals::FROM_CPU_INTR1<'static>,
+    pub from_cpu_intr2: esp_hal::peripherals::FROM_CPU_INTR2<'static>,
+    pub from_cpu_intr3: esp_hal::peripherals::FROM_CPU_INTR3<'static>,
+    pub wifi: esp_hal::peripherals::WIFI<'static>,
+    pub bt: esp_hal::peripherals::BT<'static>,
+    pub rng: esp_hal::peripherals::RNG<'static>,
+    pub cpu_ctrl: esp_hal::peripherals::CPU_CTRL<'static>,
+    pub usb_device: esp_hal::peripherals::USB_DEVICE<'static>,
+    pub lpwr: esp_hal::peripherals::LPWR<'static>,
+}
+
+macro_rules! take_spare {
+    ($p:ident) => {
+        Spare {
+            timg0: $p.TIMG0,
+            timg1: $p.TIMG1,
+            systimer: $p.SYSTIMER,
+            from_cpu_intr0: $p.FROM_CPU_INTR0,
+            from_cpu_intr1: $p.FROM_CPU_INTR1,
+            from_cpu_intr2: $p.FROM_CPU_INTR2,
+            from_cpu_intr3: $p.FROM_CPU_INTR3,
+            wifi: $p.WIFI,
+            bt: $p.BT,
+            rng: $p.RNG,
+            cpu_ctrl: $p.CPU_CTRL,
+            usb_device: $p.USB_DEVICE,
+            lpwr: $p.LPWR,
+        }
+    };
 }
 
 impl ButtonInputs {
@@ -187,6 +235,7 @@ pub fn init(mut p: Peripherals) -> Result<Devices, InitError> {
 
 #[inline(never)]
 fn init_cores3(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devices, InitError> {
+    let spare = take_spare!(p);
     let mut delay = Delay::new();
     // i2c_int → (pmic, ioexp) → lcd(reset, supply) → backlight → touch
     let i2c = I2c::new(p.I2C0, I2cConfig::default().with_frequency(Rate::from_khz(400)))
@@ -232,11 +281,13 @@ fn init_cores3(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devic
         imu: None, // BMI270 driver pending
         power,
         buttons: ButtonInputs::TouchAsA,
+        spare,
     })
 }
 
 #[inline(never)]
 fn init_atoms3(mut p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devices, InitError> {
+    let spare = take_spare!(p);
     let mut delay = Delay::new();
     let mut rst = Output::new(p.GPIO34, Level::Low, OutputConfig::default());
     delay.delay_millis(10);
@@ -282,5 +333,6 @@ fn init_atoms3(mut p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<D
         imu,
         power: None,
         buttons: ButtonInputs::Gpio(button),
+        spare,
     })
 }
