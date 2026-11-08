@@ -1,0 +1,32 @@
+# Firmware for the ESP32-P4 rev v1.x (M5Stack Tab5). Build from this directory:
+#   cargo build --release -p kumiki-tab5-hello
+# Flash (keeps the bootloader / partition table already on the Tab5):
+#   espflash save-image --chip esp32p4 --min-chip-rev 1.0 --flash-size 16mb \
+#       target/riscv32imafc-unknown-none-elf/release/kumiki-tab5-hello hello.bin
+#   espflash erase-region --port /dev/ttyACM0 0xd000 0x2000   # otadata: boot ota_0
+#   espflash write-bin --port /dev/ttyACM0 0x10000 hello.bin
+[workspace]
+resolver = "3"
+members = ["kumiki-tab5-hello"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Kenta Ida <fuga@fugafuga.org>"]
+repository = "https://github.com/ciniml/kumiki"
+rust-version = "1.88"
+
+[workspace.dependencies]
+embedded-hal = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+debug = true
+panic = "abort"
+
+[profile.dev]
+opt-level = "s"
+panic = "abort"

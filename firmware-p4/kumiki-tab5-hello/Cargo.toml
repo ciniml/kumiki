@@ -1,0 +1,19 @@
+[package]
+name = "kumiki-tab5-hello"
+description = "M4a: boot log and internal I2C scan on the M5Stack Tab5 (ESP32-P4 rev v1)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "kumiki-tab5-hello"
+test = false
+bench = false
+
+[dependencies]
+kumiki-p4v1-hal = { path = "../../hal/kumiki-p4v1-hal" }
+embedded-hal = { workspace = true }

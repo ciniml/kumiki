@@ -1,0 +1,103 @@
+//! Minimal HAL for the ESP32-P4 **chip revision v1.x** (M5Stack Tab5).
+//!
+//! esp-hal supports only rev v3.0+ and will not accept v1.x support
+//! (esp-hal roadmap #3962), so this crate drives the registers directly,
+//! after ESP-IDF's `components/soc/esp32p4/register/hw_ver1` headers. Most
+//! of it is ported from tab5-os (`kernel/src/platform/esp32p4v1*`, same
+//! author, MIT OR Apache-2.0), where it runs on a real Tab5.
+//!
+//! Scope: only what kumiki's Tab5 board definition needs. Blocking,
+//! single-core, polled.
+//!
+//! - [`rt`]: entry point, app descriptor, linker script, fatal trap report
+//! - [`usj`]: USB Serial/JTAG console ([`println!`])
+//! - [`time`]: SYSTIMER clock and [`time::Delay`]
+//! - [`gpio`]: pins and embedded-hal digital traits
+//! - [`i2c`]: I²C master with embedded-hal's `I2c`
+
+#![no_std]
+
+pub mod gpio;
+pub mod i2c;
+pub mod rt;
+pub mod time;
+pub mod usj;
+mod wdt;
+
+pub use embedded_hal;
+
+/// Volatile 32-bit register read.
+///
+/// # Safety
+/// `addr` must be a valid, readable MMIO register.
+#[inline(always)]
+pub(crate) unsafe fn rd(addr: usize) -> u32 {
+    unsafe { core::ptr::read_volatile(addr as *const u32) }
+}
+
+/// Volatile 32-bit register write.
+///
+/// # Safety
+/// `addr` must be a valid, writable MMIO register.
+#[inline(always)]
+pub(crate) unsafe fn wr(addr: usize, v: u32) {
+    unsafe { core::ptr::write_volatile(addr as *mut u32, v) }
+}
+
+pub(crate) fn set_bits(addr: usize, bits: u32) {
+    unsafe { wr(addr, rd(addr) | bits) }
+}
+
+pub(crate) fn clear_bits(addr: usize, bits: u32) {
+    unsafe { wr(addr, rd(addr) & !bits) }
+}
+
+/// Sets the `width`-bit field at `shift` to `v`.
+pub(crate) fn set_field(addr: usize, mask: u32, shift: u32, v: u32) {
+    unsafe { wr(addr, (rd(addr) & !mask) | ((v << shift) & mask)) }
+}
+
+/// The peripherals this HAL drives, each taken once.
+pub struct Peripherals {
+    /// GPIO pins.
+    pub pins: gpio::Pins,
+    /// I²C controller 0.
+    pub i2c0: i2c::I2c0,
+    /// I²C controller 1.
+    pub i2c1: i2c::I2c1,
+}
+
+static mut TAKEN: bool = false;
+
+/// Takes the peripherals. Returns `None` after the first call.
+pub fn take() -> Option<Peripherals> {
+    // Single core, called from the main flow only.
+    unsafe {
+        if TAKEN {
+            return None;
+        }
+        TAKEN = true;
+    }
+    Some(Peripherals { pins: gpio::Pins::new(), i2c0: i2c::I2c0(()), i2c1: i2c::I2c1(()) })
+}
+
+/// Chip information read at run time.
+#[derive(Debug, Clone, Copy)]
+pub struct ChipInfo {
+    /// `misa`.
+    pub misa: u32,
+    /// The CPU clock in Hz, measured against SYSTIMER.
+    pub cpu_hz: u32,
+    /// The factory MAC address.
+    pub mac: [u8; 6],
+}
+
+/// Reads [`ChipInfo`] (takes about 1 ms).
+pub fn chip_info() -> ChipInfo {
+    let misa: u32;
+    unsafe { core::arch::asm!("csrr {0}, misa", out(reg) misa) };
+    // EFUSE_RD_MAC_SYS_0 / _1 (efuse_reg.h): MAC[0..4] little-endian, then MAC[4..6].
+    let (lo, hi) = unsafe { (rd(0x5012_D044), rd(0x5012_D048)) };
+    let mac = [(hi >> 8) as u8, hi as u8, (lo >> 24) as u8, (lo >> 16) as u8, (lo >> 8) as u8, lo as u8];
+    ChipInfo { misa, cpu_hz: time::measure_cpu_hz(), mac }
+}

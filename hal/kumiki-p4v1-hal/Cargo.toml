@@ -1,0 +1,12 @@
+[package]
+name = "kumiki-p4v1-hal"
+description = "Minimal no_std HAL for ESP32-P4 chip revision v1.x (M5Stack Tab5), booted by the ESP-IDF 2nd stage bootloader"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Kenta Ida <fuga@fugafuga.org>"]
+repository = "https://github.com/ciniml/kumiki"
+rust-version = "1.88"
+
+[dependencies]
+embedded-hal = "1.0"

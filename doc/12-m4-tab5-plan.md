@@ -44,6 +44,20 @@ dt/kumiki-dtgen          p4v1 バックエンド（HAL アダプタ違い）
 | M4c | PPA を `FramebufferPanel::accel` として使い、塗りつぶしとコピーを `FastDraw` から使えるようにする | 全画面の塗りつぶしが 6ms 以下（tab5-os の 5.1ms が目安） |
 | M4d | Tab5 のボード定義: PI4IOE5V6408、GT911 / ST7123 のタッチ、BMI270、パネルのロット違いの判別。DTS と p4v1 用の生成バックエンド | 同じアプリ（kumiki-demo 相当）が Tab5 で動き、ボード定義が DTS から生成される |
 
+## 進捗
+
+### M4a 完了（2026-11-08）
+
+- `hal/kumiki-p4v1-hal`（rt、USB Serial/JTAG、SYSTIMER、GPIO、I2C、ウォッチドッグの停止）と `firmware-p4/kumiki-tab5-hello` を追加した。
+  - ターゲットは `riscv32imafc-unknown-none-elf`（stable のツールチェイン）。`_start` で FPU を有効にする（mstatus.FS）。
+  - I2C は embedded-hal の `I2c` を実装した。長い書き込みと読み出しは、END コマンドで複数のコマンドリストに分ける。
+- Tab5 の実機での結果（ログ全文は省略）:
+  - IDF の v1 用ブートローダから起動した。フラッシュのセグメントは 2 つ（appdesc + rodata、text）。
+  - misa `0x40901125`、MAC `30:ed:a0:e0:cb:86`（tab5-os の記録と一致）。
+  - 内部 I2C（GPIO31/32、100kHz）のスキャン結果: 0x10（ES8388）、0x14（GT911）、0x32（RX8130）、0x36、0x40（ES7210）、0x41（INA226）、0x43 / 0x44（PI4IOE5V6408）、0x68（BMI270）。
+  - PI4IOE5V6408 #1 のレジスタ 0x01 は `0xa0`。
+- **CPU クロックは約 89MHz**（`mcycle` を SYSTIMER と比べて測定）。ブートローダは CPU を最高速度（360MHz）にしていない。M4b の前に、tab5-os の `clock.rs` を移植して CPU と PLL を設定する。
+
 ## 書き込みについて
 
 - Tab5 に書き込むと、いま入っている tab5-os のカーネル（0x10000）が上書きされる。tab5-os の `make flash-p4` で戻せる。
