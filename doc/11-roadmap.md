@@ -107,7 +107,7 @@
 
 | 共通化の確認 | アプリ本体を HAL から独立させ（`firmware/kumiki-demo/src/app.rs`）、`Any*` を生成に切り替えた後のバイナリで、CoreS3 / AtomS3 / StopWatch / Tab5 の 4 機種の判別と初期化を確認した（2026-11-08） |
 
-| M5（進行中） | スプライトの回転・拡大縮小（`Sprite::push_rotate_zoom`、M5GFX の `pushRotateZoom` 相当）。RTC（`kumiki-class::Rtc`、`kumiki-rtc` に PCF8563 / BM8563 と RX8130、DT の `chosen { kumiki,rtc }` から生成）。Tab5 の RX8130 と CoreS3 の BM8563 の両方で、読み出しと時刻の進みを確認した（CoreS3 は以前に設定された正しい時刻を保持していた）。オーディオ出力（`kumiki-class::Speaker`、CoreS3 の AW88298 + esp-hal の I2S DMA ストリーム、DT から生成）で、CoreS3 から音が出ることを確認した。マイク（`kumiki-class::Microphone`、CoreS3 の ES7210）も入れ、声でレベルが動くことを確認した。I2S1 を全二重（RX が TX の BCK / WS を共有）で使い、スピーカーとマイクを同時に動かす。残り：入力のフレーム数が設定の 48kHz より約 3% 少ない（46.6k/s）原因の切り分け、Tab5 のオーディオ（P4 v1 の I2S と ES8388 / ES7210） |
+| M5（進行中） | スプライトの回転・拡大縮小（`Sprite::push_rotate_zoom`、M5GFX の `pushRotateZoom` 相当）。RTC（`kumiki-class::Rtc`、`kumiki-rtc` に PCF8563 / BM8563 と RX8130、DT の `chosen { kumiki,rtc }` から生成）。Tab5 の RX8130 と CoreS3 の BM8563 の両方で、読み出しと時刻の進みを確認した（CoreS3 は以前に設定された正しい時刻を保持していた）。オーディオ出力（`kumiki-class::Speaker`、CoreS3 の AW88298 + esp-hal の I2S DMA ストリーム、DT から生成）で、CoreS3 から音が出ることを確認した。マイク（`kumiki-class::Microphone`、CoreS3 の ES7210）も入れ、声でレベルが動くことを確認した。I2S1 を全二重（RX が TX の BCK / WS を共有）で使い、スピーカーとマイクを同時に動かす。入力のフレーム数の不足は、出力側が正確に 48000Hz で送っていること（2 秒分の送出に 2000ms）を確かめたうえで、受信側の不具合を 1 つ直して 3% から約 1%（47.45k/s）に減った（DMA の区切りが途中で終わると `pop` が 4 の倍数でない長さを返し、余りを捨てていた。持ち越すようにした）。残りの約 1% は、止まったストリームの再開とは関係がない（判定の時間を変えても同じ）。esp-hal が設定する `rx_eof_num` ごとの EOF の扱いを疑っている。残り：この約 1% の切り分け、Tab5 のオーディオ（P4 v1 の I2S と ES8388 / ES7210） |
 
 ### 実機で分かったこと
 

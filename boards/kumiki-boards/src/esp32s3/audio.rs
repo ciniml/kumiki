@@ -37,6 +37,9 @@ pub struct I2sIn {
     rate: u32,
     /// When data last arrived.
     last_data: esp_hal::time::Instant,
+    /// Start of a frame cut by a descriptor that ended early (an EOF).
+    carry: [u8; 4],
+    carry_len: usize,
     /// Restarts after the stream overflowed (diagnostics).
     pub restarts: u32,
 }
@@ -50,7 +53,7 @@ impl I2sIn {
     /// Starts recording into `buf` on `rx` at `rate` Hz.
     pub fn new(rx: I2sRx<'static, Blocking>, buf: DmaRxStreamBuf, rate: u32) -> Option<Self> {
         let xfer = rx.read(buf).ok()?;
-        Some(Self { xfer: Some(xfer), rate, last_data: esp_hal::time::Instant::now(), restarts: 0 })
+        Some(Self { xfer: Some(xfer), rate, last_data: esp_hal::time::Instant::now(), carry: [0; 4], carry_len: 0, restarts: 0 })
     }
 
     /// Moves the recorded frames into `out`; returns how many.
@@ -61,22 +64,30 @@ impl I2sIn {
             self.restarts += 1;
             self.xfer = rx.read(buf).ok();
             self.last_data = esp_hal::time::Instant::now();
+            self.carry_len = 0;
         }
         let Some(x) = self.xfer.as_mut() else { return 0 };
         let mut n = 0;
         while n < out.len() {
-            let mut b = [0u8; 256];
-            let want = ((out.len() - n) * 4).min(b.len());
-            let got = x.pop(&mut b[..want]) & !3;
-            if got == 0 {
-                break;
-            }
-            for k in 0..got / 4 {
+            // Bytes of a frame split by a short descriptor come first.
+            let mut b = [0u8; 260];
+            let c = self.carry_len;
+            b[..c].copy_from_slice(&self.carry[..c]);
+            let want = ((out.len() - n) * 4).min(256);
+            let got = x.pop(&mut b[c..c + want]);
+            let total = c + got;
+            let whole = total / 4;
+            for k in 0..whole {
                 let l = i16::from_le_bytes([b[k * 4], b[k * 4 + 1]]);
                 let r = i16::from_le_bytes([b[k * 4 + 2], b[k * 4 + 3]]);
                 out[n + k] = [l, r];
             }
-            n += got / 4;
+            self.carry_len = total - whole * 4;
+            self.carry[..self.carry_len].copy_from_slice(&b[whole * 4..total]);
+            n += whole;
+            if got == 0 {
+                break;
+            }
         }
         if n > 0 {
             self.last_data = esp_hal::time::Instant::now();
