@@ -96,10 +96,10 @@
 |---|---|
 | M0 | 完了：ワークスペース、M5GFX 比較ベンチ（`bench/m5gfx-idf`）、基準値 |
 | M1 | 完了：全画面転送で M5GFX の 99%（CoreS3 / AtomS3。[bench-results](bench-results/)） |
-| M2 | ほぼ完了：同じバイナリで CoreS3 / AtomS3 / StopWatch を自動判別。async 版（自作 `block_on` と embassy の両方）は AtomS3 で確認。CoreS3 での async 版と BMI270 の実機確認が残り |
+| M2 | 完了：同じバイナリで CoreS3 / AtomS3 / StopWatch を自動判別。async 版（自作 `block_on` と embassy の両方）を AtomS3（113.7fps）と CoreS3（25.8fps、全画面を毎フレーム描画＋転送）で確認。BMI270 は CoreS3 と StopWatch の両方で動作 |
 | 追加 | StopWatch（QSPI の CO5300、`BufferedDisplay`、M5PM1 / M5IOE1、CST820 / CST9217、BMI270）を前倒しで対応。表示・ボタン・IMU・タッチを実機で確認 |
 | M3 | v0 完了：`kumiki-dt`（前処理・構文解析・合成・phandle 解決）、3 機種の DTS（`dtc` でも警告なし）、YAML バインディング、`kumiki-dtgen`（検証・初期化順序・コード生成）。`kumiki-boards` は生成された判別関数・ピンのまとめ・定数を使う形に移行し、StopWatch で動作を確認。残り（v1）：初期化の手順そのものをバインディングのテンプレートから生成する、esp-metadata から SoC の `.dtsi` を生成する |
-| M3 v1 | 初期化の生成：バインディングの `kumiki.init` / `probe` / `gpio-pin` テンプレートを INIT_ORDER の順に展開し、機種ごとの `init` と `init_board` を生成。手書きの `init_*` を廃止。AXP2101 はレギュレータノード、AW9523 は `gpio-hog`、LCD リセットは `reset-gpios`（エキスパンダのピン）から汎用に設定。StopWatch の非公開レジスタ手順は glue ノード（`m5stack,stopwatch-power-sequence`）。second source は probe グループとして生成。StopWatch で動作確認済み、CoreS3 / AtomS3 は実機確認待ち。残り：esp-metadata からの `.dtsi` 生成、`Any*` の生成 |
+| M3 v1 | 初期化の生成：バインディングの `kumiki.init` / `probe` / `gpio-pin` テンプレートを INIT_ORDER の順に展開し、機種ごとの `init` と `init_board` を生成。手書きの `init_*` を廃止。AXP2101 はレギュレータノード、AW9523 は `gpio-hog`、LCD リセットは `reset-gpios`（エキスパンダのピン）から汎用に設定。StopWatch の非公開レジスタ手順は glue ノード（`m5stack,stopwatch-power-sequence`）。second source は probe グループとして生成。3 機種すべてで動作確認済み（CoreS3 は汎用化した AXP2101 / AW9523 / エキスパンダ経由の LCD リセットで起動）。残り：esp-metadata からの `.dtsi` 生成、`Any*` の生成 |
 
 ### 実機で分かったこと
 
