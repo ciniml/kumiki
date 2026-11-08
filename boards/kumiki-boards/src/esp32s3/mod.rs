@@ -4,10 +4,16 @@
 //! board is identified):
 //! 1. CoreS3: internal I²C (SDA 12 / SCL 11) answers with AXP2101 id 0x4A at
 //!    0x34 and AW9523B id 0x23 at 0x58 (as in M5GFX's autodetect).
-//! 2. AtomS3: I²C on SDA 38 / SCL 39 answers with MPU-6886 WHO_AM_I 0x19.
+//! 2. AtomS3: the GC9107 panel on the AtomS3 display pins answers RDDID with
+//!    `00 91 07` (3-wire SPI, bit-banged), as in M5GFX's autodetect.
+//!    The MPU-6886 is probed afterwards and is optional.
 
 mod any;
 pub mod chips;
+mod probe;
+
+/// RDDID bytes of the GC9107 (M5GFX: `(id & 0xFFFFFF) == 0x079100`).
+const GC9107_ID: [u8; 3] = [0x00, 0x91, 0x07];
 
 use core::cell::RefCell;
 
@@ -71,8 +77,15 @@ impl BoardId {
 /// Bring-up error.
 #[derive(Debug)]
 pub enum InitError {
-    /// No candidate board matched.
-    UnknownBoard,
+    /// No candidate board matched. Holds what each probe read (`None` = no ACK).
+    UnknownBoard {
+        /// AXP2101 register 0x03 on I²C 12/11.
+        axp2101: Option<u8>,
+        /// AW9523B register 0x10 on I²C 12/11.
+        aw9523: Option<u8>,
+        /// RDDID bytes read on the AtomS3 display pins.
+        atoms3_panel_id: [u8; 3],
+    },
     /// A peripheral could not be configured.
     Config,
     /// I²C failure during bring-up.
@@ -129,28 +142,32 @@ static I2C_INT: StaticCell<RefCell<I2cBus>> = StaticCell::new();
 /// Probe which board this is, borrowing the peripherals only for the duration.
 fn detect(p: &mut Peripherals) -> Result<BoardId, InitError> {
     let cfg = I2cConfig::default().with_frequency(Rate::from_khz(100));
+    let (mut axp, mut aw, mut id) = (None, None, [0u8; 3]);
     if CORES3 {
         let mut i2c = I2c::new(p.I2C0.reborrow(), cfg)
             .map_err(|_| InitError::Config)?
             .with_sda(p.GPIO12.reborrow())
             .with_scl(p.GPIO11.reborrow());
-        let axp = chips::read_reg(&mut i2c, chips::AXP2101_ADDR, 0x03).ok();
-        let aw = chips::read_reg(&mut i2c, chips::AW9523_ADDR, 0x10).ok();
+        axp = chips::read_reg(&mut i2c, chips::AXP2101_ADDR, 0x03).ok();
+        aw = chips::read_reg(&mut i2c, chips::AW9523_ADDR, 0x10).ok();
         if axp == Some(chips::AXP2101_ID) && aw == Some(chips::AW9523_ID) {
             return Ok(BoardId::M5StackCoreS3);
         }
     }
     if ATOMS3 {
-        let mut i2c = I2c::new(p.I2C0.reborrow(), cfg)
-            .map_err(|_| InitError::Config)?
-            .with_sda(p.GPIO38.reborrow())
-            .with_scl(p.GPIO39.reborrow());
-        let mut imu = Mpu6886::new(&mut i2c, kumiki_mpu6886::DEFAULT_ADDRESS);
-        if imu.who_am_i().ok() == Some(kumiki_mpu6886::WHO_AM_I_VALUE) {
+        // GC9107 panel id over the AtomS3 display pins (SCK 17, SDA 21, CS 15, DC 33, RST 34).
+        id = probe::read_dcs_id_3wire(
+            p.GPIO17.reborrow(),
+            p.GPIO21.reborrow(),
+            p.GPIO15.reborrow(),
+            p.GPIO33.reborrow(),
+            p.GPIO34.reborrow(),
+        );
+        if id == GC9107_ID {
             return Ok(BoardId::M5StackAtomS3);
         }
     }
-    Err(InitError::UnknownBoard)
+    Err(InitError::UnknownBoard { axp2101: axp, aw9523: aw, atoms3_panel_id: id })
 }
 
 /// Detect the board and bring every device up. Call once, after `esp_hal::init`.
@@ -244,7 +261,7 @@ fn init_atoms3(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devic
 
     let backlight = AnyBacklight::Gpio(Output::new(p.GPIO16, Level::High, OutputConfig::default()));
 
-    let i2c = I2c::new(p.I2C0, I2cConfig::default().with_frequency(Rate::from_khz(400)))
+    let i2c = I2c::new(p.I2C1, I2cConfig::default().with_frequency(Rate::from_khz(400)))
         .map_err(|_| InitError::Config)?
         .with_sda(p.GPIO38)
         .with_scl(p.GPIO39);

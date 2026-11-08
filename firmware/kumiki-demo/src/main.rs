@@ -87,7 +87,13 @@ fn main() -> ! {
         Err(e) => panic!("board init failed: {e:?}"),
     };
     let Devices { board, mut display, mut backlight, mut touch, mut imu, mut power, mut buttons } = dev;
-    println!("kumiki-demo: detected {}", board.name());
+    println!(
+        "kumiki-demo: detected {} (touch: {}, imu: {}, power: {})",
+        board.name(),
+        touch.is_some(),
+        imu.is_some(),
+        power.is_some()
+    );
     backlight.set_brightness(200).ok();
 
     let mut sprite_buf = [0u8; 32 * 32 * 2];
