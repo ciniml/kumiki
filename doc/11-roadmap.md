@@ -107,7 +107,7 @@
 
 | 共通化の確認 | アプリ本体を HAL から独立させ（`firmware/kumiki-demo/src/app.rs`）、`Any*` を生成に切り替えた後のバイナリで、CoreS3 / AtomS3 / StopWatch / Tab5 の 4 機種の判別と初期化を確認した（2026-11-08） |
 
-| M5（進行中） | スプライトの回転・拡大縮小（`Sprite::push_rotate_zoom`、M5GFX の `pushRotateZoom` 相当）。RTC（`kumiki-class::Rtc`、`kumiki-rtc` に PCF8563 / BM8563 と RX8130、DT の `chosen { kumiki,rtc }` から生成）。Tab5 の RX8130 で読み出しと時刻の進みを確認、CoreS3 の BM8563 は実機確認待ち。オーディオは未着手 |
+| M5（進行中） | スプライトの回転・拡大縮小（`Sprite::push_rotate_zoom`、M5GFX の `pushRotateZoom` 相当）。RTC（`kumiki-class::Rtc`、`kumiki-rtc` に PCF8563 / BM8563 と RX8130、DT の `chosen { kumiki,rtc }` から生成）。Tab5 の RX8130 と CoreS3 の BM8563 の両方で、読み出しと時刻の進みを確認した（CoreS3 は以前に設定された正しい時刻を保持していた）。オーディオは未着手 |
 
 ### 実機で分かったこと
 
