@@ -1217,6 +1217,7 @@ dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-bus",
  "esp-hal",
+ "esp32s3",
  "kumiki-bmi270",
  "kumiki-class",
  "kumiki-gfx",

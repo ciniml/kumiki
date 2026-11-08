@@ -266,7 +266,7 @@
           // Many small descriptors: consumed ones are relinked at the tail, and the
           // DMA reads ahead, so a few would leave it no room (it stops when full).
           let buf = esp_hal::dma_rx_stream_buffer!(16_000, 1_000);
-          let input = audio::I2sIn::new(rx, buf, ${var:i2s}.rate).ok_or(InitError::Config)?;
+          let input = audio::I2sIn::new(rx, buf, ${var:i2s}.rate, ${var:i2s}.instance).ok_or(InitError::Config)?;
           audio::Es7210::new(RefCellDevice::new(${bus}), ${const:ADDR}, input).ok().map(AnyMicrophone::${variant})
       }
     init-for:

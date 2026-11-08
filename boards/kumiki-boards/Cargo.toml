@@ -9,7 +9,7 @@ repository = "https://github.com/ciniml/kumiki"
 
 [features]
 # Exactly one chip.
-chip-esp32s3 = ["dep:esp-hal", "dep:kumiki-gfx-bus-esp", "dep:kumiki-mpu6886", "kumiki-gfx-bus-esp/fifo-esp32s3"]
+chip-esp32s3 = ["dep:esp-hal", "dep:esp32s3", "dep:kumiki-gfx-bus-esp", "dep:kumiki-mpu6886", "kumiki-gfx-bus-esp/fifo-esp32s3"]
 chip-p4v1 = ["dep:kumiki-p4v1-hal"]
 # Optional board pinning (no feature = every board of the chip is a detection candidate).
 board-m5stack-cores3 = []
@@ -31,5 +31,7 @@ static_cell = "2"
 kumiki-gfx-bus-esp = { path = "../../gfx/kumiki-gfx-bus-esp", optional = true }
 kumiki-mpu6886 = { path = "../../drivers/kumiki-mpu6886", optional = true }
 esp-hal = { version = ">=1.2, <1.4", features = ["requires-unstable"], optional = true }
+# The PAC esp-hal uses, for one register esp-hal does not expose (I2S RX_EOF_NUM).
+esp32s3 = { version = "0.36", optional = true }
 # ESP32-P4 rev v1
 kumiki-p4v1-hal = { path = "../../hal/kumiki-p4v1-hal", features = ["gfx"], optional = true }

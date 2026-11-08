@@ -674,7 +674,7 @@ pub mod cores3 {
             let i2s = I2s::new(p.I2S1, p.DMA_CH1, cfg).map_err(|_| InitError::Config)?.with_mclk(pins.i2s1_mclk);
             let tx = i2s.i2s_tx.with_bclk(pins.i2s1_bclk).with_ws(pins.i2s1_ws).with_dout(pins.i2s1_dout).build();
             let rx = i2s.i2s_rx.with_din(pins.i2s1_din).build();
-            audio::I2sPorts { rate, tx: Some(tx), rx: Some(rx) }
+            audio::I2sPorts { instance: i2s1::INSTANCE, rate, tx: Some(tx), rx: Some(rx) }
         };
         // /soc/i2c@60013000/amplifier@36 (awinic,aw88298)
         let mut speaker = {
@@ -689,7 +689,7 @@ pub mod cores3 {
             // Many small descriptors: consumed ones are relinked at the tail, and the
             // DMA reads ahead, so a few would leave it no room (it stops when full).
             let buf = esp_hal::dma_rx_stream_buffer!(16_000, 1_000);
-            let input = audio::I2sIn::new(rx, buf, i2s1.rate).ok_or(InitError::Config)?;
+            let input = audio::I2sIn::new(rx, buf, i2s1.rate, i2s1.instance).ok_or(InitError::Config)?;
             audio::Es7210::new(RefCellDevice::new(i2c0), microphone::ADDR, input).ok().map(AnyMicrophone::Es7210)
         };
         // /backlight (kumiki,regulator-backlight)

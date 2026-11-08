@@ -23,6 +23,8 @@ use kumiki_class::{Microphone, Speaker};
 
 /// The two directions of one I²S controller, taken by the devices on it.
 pub struct I2sPorts {
+    /// Controller instance name (`"I2S0"` / `"I2S1"`).
+    pub instance: &'static str,
     /// Sample rate in Hz (both directions).
     pub rate: u32,
     /// Transmit side (to an amplifier / DAC).
@@ -35,6 +37,7 @@ pub struct I2sPorts {
 pub struct I2sIn {
     xfer: Option<I2sRxDmaTransfer<'static, Blocking, DmaRxStreamBuf>>,
     rate: u32,
+    instance: &'static str,
     /// When data last arrived.
     last_data: esp_hal::time::Instant,
     /// Start of a frame cut by a descriptor that ended early (an EOF).
@@ -49,11 +52,49 @@ pub struct I2sIn {
 /// sticky RX_DONE raw interrupt, set after the first descriptor.)
 const RX_STALL_MS: u64 = 200;
 
+/// Bytes between RX EOFs: the descriptor size of the stream buffer the
+/// bindings create (`dma_rx_stream_buffer!(_, 1_000)`), a whole number of
+/// 16-bit stereo frames.
+pub const RX_EOF_BYTES: u32 = 1_000;
+
+/// Fixes two settings esp-hal makes for a full-duplex stream (applied after
+/// every `read` start):
+///
+/// * **TX_STOP_EN = 0**: esp-hal leaves it 1, which stops BCK / WS whenever
+///   the TX FIFO runs empty for a moment. RX (signal loopback) and the
+///   codecs run on those clocks, so the input lost frames: about 1.1 % on a
+///   CoreS3 (47.46k of 48k frames per second), 48.0k with this cleared.
+/// * **RX_EOF_NUM** on descriptor and frame boundaries: esp-hal writes
+///   `usize::MAX - 1` into this 12-bit field, which leaves 4094 (an EOF
+///   every 8190 bytes, half-way through a frame and a descriptor). Not a
+///   loss by itself (`I2sIn` carries split frames over), but whole frames
+///   per descriptor are simpler.
+fn fix_duplex_config(instance: &str) {
+    // (RX_BITS_MOD + 1) * (RX_EOF_NUM + 1) bits; 16-bit data.
+    let n = (RX_EOF_BYTES * 8 / 16 - 1) as u16;
+    // SAFETY: only RX_EOF_NUM is written (plus RX_UPDATE to latch it), on the
+    // controller this stream owns.
+    let regs = unsafe {
+        match instance {
+            "I2S0" => &*(esp32s3::I2S0::ptr() as *const esp32s3::i2s0::RegisterBlock),
+            _ => &*(esp32s3::I2S1::ptr() as *const esp32s3::i2s0::RegisterBlock),
+        }
+    };
+    regs.rxeof_num().write(|w| unsafe { w.rx_eof_num().bits(n) });
+    regs.rx_conf().modify(|_, w| w.rx_update().set_bit());
+    while regs.rx_conf().read().rx_update().bit_is_set() {}
+    // Keep BCK / WS running when the TX FIFO runs empty.
+    regs.tx_conf().modify(|_, w| w.tx_stop_en().clear_bit());
+    regs.tx_conf().modify(|_, w| w.tx_update().set_bit());
+    while regs.tx_conf().read().tx_update().bit_is_set() {}
+}
+
 impl I2sIn {
-    /// Starts recording into `buf` on `rx` at `rate` Hz.
-    pub fn new(rx: I2sRx<'static, Blocking>, buf: DmaRxStreamBuf, rate: u32) -> Option<Self> {
+    /// Starts recording into `buf` on `rx` (controller `instance`) at `rate` Hz.
+    pub fn new(rx: I2sRx<'static, Blocking>, buf: DmaRxStreamBuf, rate: u32, instance: &'static str) -> Option<Self> {
         let xfer = rx.read(buf).ok()?;
-        Some(Self { xfer: Some(xfer), rate, last_data: esp_hal::time::Instant::now(), carry: [0; 4], carry_len: 0, restarts: 0 })
+        fix_duplex_config(instance);
+        Some(Self { xfer: Some(xfer), rate, instance, last_data: esp_hal::time::Instant::now(), carry: [0; 4], carry_len: 0, restarts: 0 })
     }
 
     /// Moves the recorded frames into `out`; returns how many.
@@ -63,6 +104,7 @@ impl I2sIn {
             let (rx, buf) = self.xfer.take().unwrap().stop();
             self.restarts += 1;
             self.xfer = rx.read(buf).ok();
+            fix_duplex_config(self.instance);
             self.last_data = esp_hal::time::Instant::now();
             self.carry_len = 0;
         }
