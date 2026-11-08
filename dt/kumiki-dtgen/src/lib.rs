@@ -16,6 +16,7 @@
 //! from binding templates is the next step (doc/11 M3).
 
 pub mod gen_esp;
+pub mod soc_dtsi;
 
 use std::{
     collections::{BTreeMap, HashMap},
