@@ -5,7 +5,7 @@
 | 項目 | 決定 |
 |---|---|
 | ハードウェア記述の構文 | **Device Tree Source（DTS）**（[07](07-design-hwdesc.md)） |
-| クレート名 | **M5 を付けない**。仮の接頭辞は `kumiki`（[09](09-crate-layout-license.md)） |
+| クレート名 | **M5 を付けない**。プロジェクト名と接頭辞は **`kumiki`**（DT の vendor prefix も `kumiki,`。[09](09-crate-layout-license.md)） |
 | 非同期 | **async を既定にする。非同期ランタイムは embassy に固定しない**（[07](07-design-hwdesc.md) §7） |
 | Tab5 | 手元の機体は **ESP32-P4 rev v1**。esp-hal は使えないので、tab5-os 由来の自前 HAL で対応する（[07](07-design-hwdesc.md) §9） |
 | ライセンス | **MIT OR Apache-2.0**（Rust の標準） |
@@ -93,5 +93,4 @@
 ## 確認していただきたい事項
 
 1. **最初に定義を書くボードとその順序**: [08](08-design-bsp.md) §7 の表（CoreS3、AtomS3 → Core2、Tab5 → M5Paper ほか）でよいか。追加や削除はあるか。
-2. **仮の名前 `kumiki`** でよいか（DT の vendor prefix の `kumiki,` も含む）。
-3. **Tab5 の優先度**: M5 のままでよいか、前倒しするか。
+2. **Tab5 の優先度**: M5 のままでよいか、前倒しするか。
