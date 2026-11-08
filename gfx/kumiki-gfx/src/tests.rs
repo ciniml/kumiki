@@ -312,6 +312,57 @@ fn fb_display_uses_hw_fill_above_threshold() {
 }
 
 #[test]
+fn rotation_maps_round_trip() {
+    use crate::Rotation;
+    let native = Size::new(4, 6);
+    for r in [Rotation::Deg0, Rotation::Deg90, Rotation::Deg180, Rotation::Deg270] {
+        let l = r.logical_size(native);
+        for y in 0..l.height as i32 {
+            for x in 0..l.width as i32 {
+                let p = Point::new(x, y);
+                let n = r.to_native(p, native);
+                assert!(n.x >= 0 && n.y >= 0 && n.x < 4 && n.y < 6, "{r:?} {p:?} -> {n:?}");
+                assert_eq!(r.to_logical(n, native), p, "{r:?}");
+            }
+        }
+    }
+    // 90° clockwise: logical top-left is native top-right.
+    assert_eq!(Rotation::Deg90.to_native(Point::zero(), native), Point::new(3, 0));
+    // 270°: logical top-left is native bottom-left.
+    assert_eq!(Rotation::Deg270.to_native(Point::zero(), native), Point::new(0, 5));
+}
+
+#[test]
+fn fb_display_rotated_drawing() {
+    use crate::Rotation;
+    for r in [Rotation::Deg90, Rotation::Deg180, Rotation::Deg270] {
+        let mut d = crate::FbDisplay::new(MockFb::new(6, 4, true)).with_rotation(r);
+        let ls = d.size();
+        assert_eq!(ls, r.logical_size(Size::new(6, 4)));
+        d.flush().unwrap();
+        // A pixel, a filled rect (hw path above 16 px) and a blit, all logical.
+        Pixel(Point::new(1, 0), Rgb565::RED).draw(&mut d).unwrap();
+        d.fill_rect(&Rectangle::new(Point::new(0, 2), Size::new(ls.width, 2)), Rgb565::GREEN).unwrap();
+        let mut src = [0u8; 4];
+        Rgb565Be::encode(Rgb565::BLUE, &mut src[0..2]);
+        Rgb565Be::encode(Rgb565::YELLOW, &mut src[2..4]);
+        d.blit::<Rgb565Be>(&Rectangle::new(Point::new(2, 1), Size::new(2, 1)), &src, 2).unwrap();
+        let dirty = d.dirty().unwrap();
+        let p = d.into_panel();
+        let at = |l: Point| {
+            let n = r.to_native(l, Size::new(6, 4));
+            assert!(dirty.contains(n), "{r:?}: {n:?} outside dirty {dirty:?}");
+            p.px(n.x as u32, n.y as u32)
+        };
+        assert_eq!(at(Point::new(1, 0)), Rgb565::RED, "{r:?}");
+        assert_eq!(at(Point::new(0, 3)), Rgb565::GREEN, "{r:?}");
+        assert_eq!(at(Point::new(2, 1)), Rgb565::BLUE, "{r:?}");
+        assert_eq!(at(Point::new(3, 1)), Rgb565::YELLOW, "{r:?}");
+        assert_eq!(at(Point::new(0, 0)), Rgb565::BLACK, "{r:?}");
+    }
+}
+
+#[test]
 fn fb_display_copy_within_overlapping() {
     let mut d = crate::FbDisplay::new(MockFb::new(8, 8, false));
     for y in 0..8 {

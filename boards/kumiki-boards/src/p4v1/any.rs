@@ -4,7 +4,7 @@
 
 use embedded_graphics_core::{
     draw_target::DrawTarget,
-    geometry::{Dimensions, OriginDimensions, Size},
+    geometry::{Dimensions, OriginDimensions, Point, Size},
     pixelcolor::Rgb565,
     primitives::Rectangle,
     Pixel,
@@ -83,6 +83,23 @@ impl AnyDisplay {
     /// The area guaranteed to be visible (the whole screen here).
     pub fn safe_area(&self) -> Rectangle {
         self.bounding_box()
+    }
+
+    /// A touch report (panel-native coordinates) in screen coordinates,
+    /// following the display's rotation (DT `rotation`).
+    pub fn touch_to_screen(&self, p: &TouchPoint) -> Point {
+        let n = Point::new(p.x as i32, p.y as i32);
+        match self {
+            AnyDisplay::Ili9881c(d) => d.native_to_logical(n),
+        }
+    }
+
+    /// Change the rotation (clockwise from the panel's native orientation).
+    /// Redraw everything afterwards.
+    pub fn set_rotation(&mut self, r: kumiki_gfx::Rotation) {
+        match self {
+            AnyDisplay::Ili9881c(d) => d.set_rotation(r),
+        }
     }
 
     /// Present the frame (cache write-back of the changed area, buffer swap).

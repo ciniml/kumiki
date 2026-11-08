@@ -122,6 +122,12 @@ impl AnyDisplay {
         }
     }
 
+    /// A touch report in screen coordinates. The ESP32-S3 boards run their
+    /// panels in the native orientation, where touch and screen agree.
+    pub fn touch_to_screen(&self, p: &TouchPoint) -> embedded_graphics_core::geometry::Point {
+        embedded_graphics_core::geometry::Point::new(p.x as i32, p.y as i32)
+    }
+
     /// Send pending changes (frame-buffered displays); no-op for direct ones.
     pub fn flush(&mut self) -> Result<(), BusError> {
         match self {

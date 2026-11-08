@@ -62,7 +62,7 @@
         {
             let fbs = bind::dsi_frame_buffers(psram).ok_or(InitError::Config)?;
             let dsi = Dsi::init(kumiki_p4v1_hal::dsi::Panel::Ili9881c, fbs[0]).map_err(|_| InitError::Display)?;
-            AnyDisplay::${variant}(FbDisplay::new(DsiPanel::new(dsi, fbs)))
+            AnyDisplay::${variant}(FbDisplay::new(DsiPanel::new(dsi, fbs)).with_rotation(bind::rotation(${const:ROTATION})))
         }
     variant: Ili9881c
   properties:
@@ -70,6 +70,7 @@
     backlight: { type: phandle }
     width: { type: int, required: true }
     height: { type: int, required: true }
+    rotation: { type: int, description: "clockwise degrees (0/90/180/270) from the panel's native orientation to the board's natural one (Linux panel binding)" }
     kumiki,frame-buffer: { type: string, description: "where the scan-out frame buffers live (psram)" }
 
 - compatible: "ilitek,ili9342c"

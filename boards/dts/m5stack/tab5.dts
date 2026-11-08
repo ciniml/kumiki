@@ -109,6 +109,9 @@
 		backlight = <&lcd_backlight>;
 		width = <720>;
 		height = <1280>;
+		/* Native portrait; the Tab5 is used landscape with the panel's top
+		 * edge (y = 0) on the right. */
+		rotation = <270>;
 		kumiki,frame-buffer = "psram";
 	};
 };

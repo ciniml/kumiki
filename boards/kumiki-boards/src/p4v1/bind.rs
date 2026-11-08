@@ -3,6 +3,11 @@
 
 use kumiki_p4v1_hal::{cache, dsi};
 
+/// Rotation from an optional DT `rotation` (clockwise degrees).
+pub fn rotation(deg: Option<u32>) -> kumiki_gfx::Rotation {
+    kumiki_gfx::Rotation::from_quarter_turns((deg.unwrap_or(0) / 90) as u8)
+}
+
 /// Frequency in Hz from an optional DT `clock-frequency`.
 pub fn hz(v: Option<u32>, default: u32) -> u32 {
     v.unwrap_or(default)

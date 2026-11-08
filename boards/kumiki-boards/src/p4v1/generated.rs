@@ -218,6 +218,8 @@ pub mod tab5 {
         pub const HEIGHT: u32 = 1280;
         /// where the scan-out frame buffers live (psram)
         pub const FRAME_BUFFER: Option<&str> = Some("psram");
+        /// clockwise degrees (0/90/180/270) from the panel's native orientation to the board's natural one (Linux panel binding)
+        pub const ROTATION: Option<u32> = Some(270);
         pub const WIDTH: u32 = 720;
     }
     /// `/backlight` (gpio-backlight).
@@ -290,7 +292,7 @@ pub mod tab5 {
         let lcd = {
             let fbs = bind::dsi_frame_buffers(psram).ok_or(InitError::Config)?;
             let dsi = Dsi::init(kumiki_p4v1_hal::dsi::Panel::Ili9881c, fbs[0]).map_err(|_| InitError::Display)?;
-            AnyDisplay::Ili9881c(FbDisplay::new(DsiPanel::new(dsi, fbs)))
+            AnyDisplay::Ili9881c(FbDisplay::new(DsiPanel::new(dsi, fbs)).with_rotation(bind::rotation(lcd::ROTATION)))
         };
         // /backlight (gpio-backlight)
         let lcd_backlight = AnyBacklight::Gpio(Output::new(pins.lcd_backlight, true));

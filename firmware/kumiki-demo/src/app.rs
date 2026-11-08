@@ -241,7 +241,7 @@ pub fn run(dev: Devices) -> ! {
             }
             if let Ok(n) = r {
                 for p in &pts[..n] {
-                    Circle::with_center(Point::new(p.x as i32, p.y as i32), 9)
+                    Circle::with_center(display.touch_to_screen(p), 9)
                         .into_styled(PrimitiveStyle::with_fill(Rgb565::RED))
                         .draw(&mut display)
                         .ok();
@@ -253,7 +253,8 @@ pub fn run(dev: Devices) -> ! {
                     // Show the reported coordinate in the middle (readable on round panels).
                     let c = Point::new(size.width as i32 / 2, size.height as i32 / 2);
                     let mut l = Line::<24>::new();
-                    let _ = write!(l, "touch {:4},{:4}", pts[0].x, pts[0].y);
+                    let s = display.touch_to_screen(&pts[0]);
+                    let _ = write!(l, "touch {:4},{:4}", s.x, s.y);
                     let style = MonoTextStyleBuilder::new()
                         .font(font_for(&display))
                         .text_color(Rgb565::YELLOW)

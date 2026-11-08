@@ -4,7 +4,10 @@
 //! delegates byte transport to its bus. Surfaces such as [`crate::Display`]
 //! only need [`blocking::WindowPanel`] / [`asynch::WindowPanel`].
 
-use embedded_graphics_core::{geometry::Size, primitives::Rectangle};
+use embedded_graphics_core::{
+    geometry::{Point, Size},
+    primitives::Rectangle,
+};
 
 use crate::pixel::PixelFormat;
 
@@ -31,6 +34,51 @@ impl Rotation {
             2 => Self::Deg180,
             _ => Self::Deg270,
         }
+    }
+
+    /// Whether width and height swap.
+    pub const fn swaps_axes(self) -> bool {
+        matches!(self, Self::Deg90 | Self::Deg270)
+    }
+
+    /// Logical size for a panel whose native size is `native`.
+    pub const fn logical_size(self, native: Size) -> Size {
+        if self.swaps_axes() { Size::new(native.height, native.width) } else { native }
+    }
+
+    /// Logical point → native (panel memory) point, for a panel of native
+    /// size `native`. The logical image is the native one turned clockwise
+    /// by `self`.
+    pub const fn to_native(self, p: Point, native: Size) -> Point {
+        let (w, h) = (native.width as i32, native.height as i32);
+        match self {
+            Self::Deg0 => p,
+            Self::Deg90 => Point::new(w - 1 - p.y, p.x),
+            Self::Deg180 => Point::new(w - 1 - p.x, h - 1 - p.y),
+            Self::Deg270 => Point::new(p.y, h - 1 - p.x),
+        }
+    }
+
+    /// Native point → logical point (inverse of [`to_native`](Self::to_native)),
+    /// e.g. for touch coordinates reported in panel orientation.
+    pub const fn to_logical(self, p: Point, native: Size) -> Point {
+        let (w, h) = (native.width as i32, native.height as i32);
+        match self {
+            Self::Deg0 => p,
+            Self::Deg90 => Point::new(p.y, w - 1 - p.x),
+            Self::Deg180 => Point::new(w - 1 - p.x, h - 1 - p.y),
+            Self::Deg270 => Point::new(h - 1 - p.y, p.x),
+        }
+    }
+
+    /// Logical rectangle → native rectangle.
+    pub fn rect_to_native(self, r: &Rectangle, native: Size) -> Rectangle {
+        if r.size.width == 0 || r.size.height == 0 {
+            return Rectangle::new(self.to_native(r.top_left, native), Size::zero());
+        }
+        let a = self.to_native(r.top_left, native);
+        let b = self.to_native(r.top_left + Point::new(r.size.width as i32 - 1, r.size.height as i32 - 1), native);
+        Rectangle::with_corners(a, b)
     }
 }
 
