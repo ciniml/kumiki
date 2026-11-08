@@ -13,7 +13,7 @@ BSP は、[07](07-design-hwdesc.md) の DTS から生成したコード（`kumik
 | **混合（推奨）** | チップの中では M5Unified と同じ使い勝手になり、ロットの違いにも実行時に対応できる | 候補になるボードのドライバがすべてリンクされる（feature で絞れる） |
 
 - feature の構成
-  - `chip-esp32`、`chip-esp32s3`、`chip-esp32p4v1` … **必須で、どれか 1 つを選ぶ**。
+  - `chip-esp32s3`、`chip-esp32p4v1`（将来 `chip-esp32p4`、`chip-esp32c6` など）… **必須で、どれか 1 つを選ぶ**。無印 ESP32 は対象外（決定事項）。
   - `board-m5stack-cores3`、`board-m5stack-atoms3`、… **任意**。
     - 指定したボードだけを判別の候補にし、ドライバもその分だけリンクする。
     - 1 つだけ指定した場合は判別を省き、具体型の `Devices` を返す（追加コストなし）。
@@ -110,13 +110,12 @@ pub struct Config {
 
 ## 7. 最初にボード定義を書く対象
 
-決定事項: 外部との連携は行わず、**まず利用者がよく使うボードの定義から書く**。手元のリポジトリ（[02](02-local-assets.md)）での使用実績から、次の順を想定している（**対象と順序は要確認**）。
+決定事項（2026-11-08）: 外部との連携は行わず、**利用者がよく使うボードの定義から書く**。順序は **CoreS3 / AtomS3 → Tab5**。**無印 ESP32 系（Core2、M5Paper、StickC Plus2 など）は、いまからサポートする意義が薄いので対象外**とする（設計上は除外しないが、ボード定義を書かない）。
 
 | 優先 | ボード | チップ / HAL | 表示 | 吸収すべき主な違い |
 |---|---|---|---|---|
 | 1 | CoreS3 / SE | esp32s3 / esp-hal | ILI9342C/E（SPI、GPIO35 を共用） | AXP2101 + AW9523、SE にはカメラがない |
 | 1 | AtomS3 / AtomS3R | esp32s3 / esp-hal | GC9107 128×128（y オフセット 32） | PMIC がない、PWM のバックライト、IMU が MPU6886 か BMI270 か |
-| 2 | Core2 / v1.1 / v1.3 | esp32 / esp-hal | ILI9342C/E | AXP192 か AXP2101 か（ボードの DTS を分ける）、MPU6886 か BMI270 か（second source）、タッチ領域のボタン |
 | 2 | Tab5（**rev v1**） | esp32p4v1 / **kumiki-p4v1-hal**（tab5-os 由来） | DSI ILI9881C / ST7123 / ST7121 | esp-hal が使えない（[07](07-design-hwdesc.md) §9）、パネルとタッチのロット違い |
-| 3 | M5Paper | esp32 / esp-hal | IT8951（EPD） | EPD の更新モード |
-| 3 | StickC Plus2、Cardputer、PaperS3 | esp32 / esp32s3 | ST7789V2 / パラレル EPD | 必要に応じて追加する |
+| 3 | Cardputer、PaperS3、Dial など ESP32-S3 系 | esp32s3 / esp-hal | ST7789V2 / パラレル EPD / GC9A01 | 必要になったら追加する |
+| – | Core2、M5Paper、StickC Plus2 など無印 ESP32 系 | esp32 | – | **対象外** |

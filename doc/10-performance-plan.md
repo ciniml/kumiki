@@ -6,7 +6,7 @@ SPI のパネルは、どれだけ CPU 側を最適化しても「ピクセル�
 
 | 機種 | 解像度 | バス | 1 フレームのビット数 | 全画面の理論 fps |
 |---|---|---|---|---|
-| Core2 / CoreS3 | 320×240, RGB565 | SPI 40MHz | 1,228,800 | **32.6 fps**（30.7 ms） |
+| CoreS3 | 320×240, RGB565 | SPI 40MHz | 1,228,800 | **32.6 fps**（30.7 ms） |
 | AtomS3 | 128×128, RGB565 | SPI 40MHz | 262,144 | 152.6 fps（6.55 ms） |
 | StickC Plus2 / Cardputer | 240×135, RGB565 | SPI 40MHz | 518,400 | 77.2 fps（12.96 ms） |
 | Dial | 240×240, RGB565 | SPI 80MHz | 921,600 | 86.8 fps |
@@ -27,7 +27,7 @@ SPI のパネルは、どれだけ CPU 側を最適化しても「ピクセル�
 | 全画面転送中に CPU が空いている割合（B9） | 計測して記録する | async 版で 70% 以上 |
 | embedded-graphics 標準の図形（B8） | mipidsi 0.10 の 2 倍以上 | – |
 
-Tab5（M5 以降）: present の fps は垂直同期に張り付くこと。PPA での全画面塗りつぶしは 6ms 以下（tab5-os の 5.1ms が参考）で、M5GFX の CPU 描画を上回ること。
+Tab5（M4）: present の fps は垂直同期に張り付くこと。PPA での全画面塗りつぶしは 6ms 以下（tab5-os の 5.1ms が参考）で、M5GFX の CPU 描画を上回ること。
 
 ## 3. ベンチマークの項目
 

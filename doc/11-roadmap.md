@@ -10,6 +10,7 @@
 | Tab5 | 手元の機体は **ESP32-P4 rev v1**。esp-hal は使えないので、tab5-os 由来の自前 HAL で対応する（[07](07-design-hwdesc.md) §9） |
 | ライセンス | **MIT OR Apache-2.0**（Rust の標準） |
 | 外部との連携 | **行わない**。まず利用者がよく使うボードの定義から書く（[08](08-design-bsp.md) §7） |
+| ボードの順序 | **CoreS3 / AtomS3 → Tab5**。**無印 ESP32 系は対象外** |
 
 ## 進め方の方針
 
@@ -21,7 +22,7 @@
 ### M0: 土台と基準値
 
 - cargo のワークスペース、CI を用意する。
-  - ビルドの対象: esp32、esp32s3、riscv32imac（P4）、thumbv6m（RP2040）
+  - ビルドの対象: esp32s3（xtensa）、riscv32imafc（P4）、thumbv6m（RP2040、汎用性の確認用）
   - CI で回すもの: fmt、clippy、ホスト上のテスト
 - ツールチェインの手順を文書化する（espup、GCC 15.2 系のリンカ）。
 - **M5GFX のベンチマークのスケッチ**（B1〜B7、[10](10-performance-plan.md)）を作り、CoreS3 と AtomS3 で基準値を取る。
@@ -57,28 +58,27 @@
 - `kumiki-dt`: 前処理器（#include、#define、#if）、DTS v1 の構文解析、`/delete-node/`、ラベル、オーバーレイ、合成、検証
 - `boards/bindings/*.yaml`（Zephyr の書式に `kumiki:` セクションを足したもの）と `kumiki-bindings`
 - `kumiki-dtgen`: 依存グラフ、初期化順序、`Devices`、`init()`、判別の決定木を生成する。CLI は `check / gen / pintable / dump`。
-- esp-metadata から `esp32s3.dtsi` と `esp32.dtsi` を生成する。
+- esp-metadata から `esp32s3.dtsi` を生成する。P4 v1 の `.dtsi` は手で書く。
 - **M2 の手書きのコードを、CoreS3 と AtomS3 の DTS から再現する**（ゴールデンファイルで比較する）。
 - CI で、すべての DTS が標準の `dtc` でもコンパイルできることを確かめる。
 - DTS を書くだけで AtomS3R に対応できることを示す。ここで手書きのコードは書かない（kumiki-dt の価値を確かめるため）。
 - 汎用性の確認: ESP32-S3-DevKitC + ST7789、RP2040 + ST7789（`kumiki-hal-rp`）。
 
-### M4: Core2 系と機能の拡充
-
-- `chip-esp32`: Core2（v1.0 と v1.1 はボードの DTS を分け、v1.3 の IMU の違いは second source で吸収する）
-- RTC、オーディオ（NS4168）、タッチ領域のボタン
-- スプライトの回転・拡縮、パレット、`DirtyRegions`、ダブルバッファ
-- 無印 ESP32 で PSRAM 上のスプライトを転送する経路（パイプライン）の最適化
-- Slint のアダプタ（任意）
-
-### M5: Tab5（rev v1）と M5Paper
+### M4: Tab5（rev v1）
 
 - `kumiki-p4v1-hal`
   - まず `esp-hal-p4-pre-v3` を rev v1.0 の機体で短期間評価する。使えなければ、または足りなければ、tab5-os の実装（I2C、GPIO、PSRAM、クロック、DSI、GDMA の LLI リング、PPA/DMA2D）を embedded-hal を実装した HAL として切り出す。
-- DSI パネルのロット違い（ILI9881C、ST7123、ST7121）を、DT の second source と DSI の ID 読み出しで判別する。
-- PPA を `FramebufferPanel::accel` として使う。
-- M5Paper（IT8951）。
-- Tab5 の優先度が高ければ、M4 と順序を入れ替えるか並行して進めることもできる（M3 が済んでいれば依存しない）。
+- `kumiki-gfx` の `FramebufferPanel` を DSI で実装する（ダブルバッファ、キャッシュの書き戻し、vsync）。
+- PPA を `FramebufferPanel::accel` として使う（塗りつぶし、コピー）。
+- DSI パネルのロット違い（ILI9881C、ST7123、ST7121）を、DT の second source と DSI の ID 読み出しで判別する。GT911 と ST7123 のタッチ。
+- `tab5.dts` を書き、kumiki-dt で生成する（esp-hal 以外の HAL で kumiki-dt が成り立つことの確認を兼ねる）。
+
+### M5: 機能の拡充
+
+- スプライトの回転・拡縮、パレット、`DirtyRegions`、ダブルバッファ
+- RTC、オーディオ（CoreS3 の AW88298 / ES7210、Tab5 の ES8388 / ES7210）
+- Slint のアダプタ（任意）
+- 必要に応じて ESP32-S3 系のボードを追加する（Cardputer、PaperS3 など）
 
 ## 主なリスク
 
@@ -92,5 +92,4 @@
 
 ## 確認していただきたい事項
 
-1. **最初に定義を書くボードとその順序**: [08](08-design-bsp.md) §7 の表（CoreS3、AtomS3 → Core2、Tab5 → M5Paper ほか）でよいか。追加や削除はあるか。
-2. **Tab5 の優先度**: M5 のままでよいか、前倒しするか。
+現時点ではなし（2026-11-08。実装に着手した）。
