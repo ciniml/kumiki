@@ -41,6 +41,8 @@ pub enum Error<E> {
     Range,
 }
 
+const CHIPPOWER: u8 = 2;
+const DACPOWER: u8 = 4;
 const DACCONTROL3: u8 = 25;
 const DAC_MUTE: u8 = 1 << 2;
 const LDACVOL: u8 = 26;
@@ -108,6 +110,21 @@ impl<I: I2c> Es8388<I> {
         Ok(())
     }
 
+    /// Powers the DAC and the chip down (`DACPOWER` = 0xC0, `CHIPPOWER` =
+    /// 0xFF); [`init`](Self::init) powers them up again.
+    ///
+    /// On the M5Stack Tab5 the codec can be left silent after a SoC reset
+    /// (registers all as configured; the soft reset at the start of `init`
+    /// does not help, and neither does the amplifier enable). tab5-os found
+    /// that powering down for 1 ms and calling `init` again recovers it,
+    /// but only when done some time after boot (when playback first starts),
+    /// not right after the I²S controller starts. Hence a separate call,
+    /// not part of `init`.
+    pub fn power_down(&mut self) -> Result<(), Error<I::Error>> {
+        self.write(DACPOWER, 0xC0)?;
+        self.write(CHIPPOWER, 0xFF)
+    }
+
     /// DAC attenuation in 0.5 dB steps, both channels (0 = 0 dB …
     /// [`MAX_ATTENUATION`] = -96 dB).
     pub fn set_attenuation(&mut self, half_db: u8) -> Result<(), Error<I::Error>> {
@@ -165,6 +182,14 @@ mod tests {
         assert_eq!(w[0], (ADDR, std::vec![0, 0x80]));
         assert_eq!(w[14].1, [25, 0x20]); // unmuted
         assert_eq!(w[27].1, [49, 0x21]);
+    }
+
+    #[test]
+    fn power_down_writes_dac_then_chip() {
+        let mut d = Es8388::new(Rec::default(), ADDR);
+        d.power_down().unwrap();
+        let w: Vec<Vec<u8>> = d.release().0.into_iter().map(|(_, b)| b).collect();
+        assert_eq!(w, [std::vec![4, 0xC0], std::vec![2, 0xFF]]);
     }
 
     #[test]
