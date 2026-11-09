@@ -236,6 +236,9 @@ impl Speaker for AnySpeaker {
     fn set_volume(&mut self, level: u8) -> Result<(), AnyError> {
         any_speaker!(self, s => s.set_volume(level).map_err(AnyError::from))
     }
+    fn restart(&mut self) -> Result<(), AnyError> {
+        any_speaker!(self, s => s.restart().map_err(AnyError::from))
+    }
 }
 
 impl Microphone for AnyMicrophone {

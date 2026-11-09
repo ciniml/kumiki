@@ -74,6 +74,18 @@ impl<I: I2c> Speaker for Es8388<I> {
         self.gain = level as i32 + (level as i32 >> 7);
         Ok(())
     }
+    fn restart(&mut self) -> Result<(), I::Error> {
+        // tab5-os' recovery from the silent state a SoC reset can leave:
+        // DAC and chip powered down briefly, then configured again.
+        // (Neither call has arguments to be out of range.)
+        let i2c = |r: Result<(), kumiki_es8388::Error<I::Error>>| match r {
+            Err(kumiki_es8388::Error::I2c(e)) => Err(e),
+            _ => Ok(()),
+        };
+        i2c(self.codec.power_down())?;
+        kumiki_p4v1_hal::time::delay_us(2_000);
+        i2c(self.codec.init())
+    }
 }
 
 /// Everest ES7210 microphone ADC (MIC1 / MIC2) on the shared controller.

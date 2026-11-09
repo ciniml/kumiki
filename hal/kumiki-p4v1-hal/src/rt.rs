@@ -2,8 +2,9 @@
 //!
 //! The ESP-IDF 2nd stage bootloader loads the RAM segments, maps the two
 //! flash segments and jumps to `_start` (machine mode, interrupts off).
-//! `_start` enables the FPU, sets the stack, zeroes `.bss`, installs the
-//! trap vector and calls the application's entry, declared with
+//! `_start` enables the FPU, sets the stack, stops an I2S / AHB-GDMA stream
+//! a previous program left running ([`halt_stale`](crate::i2s::halt_stale): a
+//! SoC reset does not), zeroes `.bss`, installs the trap vector and calls the application's entry, declared with
 //! [`entry!`](crate::entry).
 //!
 //! Before the application runs, the watchdogs the bootloader left armed
@@ -19,6 +20,7 @@ _start:
     csrs mstatus, t0
     csrw fcsr, zero
     la sp, __stack_top
+    call {halt}                 # a stream left running must not write into .bss
     la t0, __bss_start
     la t1, __bss_end
 1:  bgeu t0, t1, 2f
@@ -47,7 +49,13 @@ kumiki_trap:
     "#,
     start = sym start_rust,
     fatal = sym fatal_trap,
+    halt = sym halt_stale,
 );
+
+/// Runs before `.bss` is zeroed: MMIO only, no statics.
+unsafe extern "C" fn halt_stale() {
+    crate::i2s::halt_stale();
+}
 
 unsafe extern "Rust" {
     fn __kumiki_main() -> !;

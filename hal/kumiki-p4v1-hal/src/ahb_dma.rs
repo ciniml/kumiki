@@ -180,6 +180,34 @@ pub fn init() {
     }
 }
 
+/// Stops every channel's links in both directions, disconnects them from
+/// their peripherals and masks their interrupts, without resetting the
+/// block.
+///
+/// A SoC reset (a debug probe's, or the one espflash does) does **not**
+/// reset the AHB GDMA: a stream the previous program left running keeps
+/// writing its RX ring into L2MEM, over whatever the new program keeps
+/// there. Call this at boot, before using L2MEM (the `rt` entry does, before
+/// zeroing `.bss`). It touches no RAM, so it may run before `.bss` is set
+/// up. It also stops channels a running OS uses: boot time only.
+pub fn halt_all() {
+    // The bus clock is on from reset; if someone turned it off, the block
+    // is idle anyway.
+    if unsafe { rd(SOC_CLK_CTRL1) } & AHB_PDMA_SYS_CLK_EN == 0 {
+        return;
+    }
+    for n in 0..CHANNELS {
+        unsafe {
+            wr(out_ch(n) + OUT_LINK, OUTLINK_STOP);
+            wr(in_ch(n) + IN_LINK, INLINK_STOP);
+            wr(out_ch(n) + OUT_PERI_SEL, PERI_NONE);
+            wr(in_ch(n) + IN_PERI_SEL, PERI_NONE);
+            wr(out_int(n) + INT_ENA, 0);
+            wr(in_int(n) + INT_ENA, 0);
+        }
+    }
+}
+
 /// Declares the AHB GDMA set up by someone else (an OS): clock on, block
 /// reset done, memory window covering the drivers' memory. [`init`] then
 /// does nothing.
@@ -248,7 +276,7 @@ impl TxChannel {
     /// ([`peri`]): burst on, owner check off (the DMA never stops at a
     /// descriptor), `write_back` = descriptors written back (owner cleared)
     /// when done, EOF once the data has left the DMA FIFO; interrupts
-    /// masked and cleared.
+    /// masked and cleared (enable them again afterwards).
     pub fn configure(&self, peri: u32, write_back: bool) {
         let c = out_ch(self.0);
         unsafe {

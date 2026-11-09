@@ -18,26 +18,38 @@
 //! Polled by default. [`I2s::start`] starts both directions;
 //! [`I2s::poll`] does the bookkeeping and is also called by the data
 //! functions, so a program that pushes and pops regularly need not call it
-//! itself. An OS can instead route the DMA interrupts
+//! itself. An OS can instead route the TX DMA interrupt
 //! ([`I2s::interrupt_sources`], [`I2s::set_interrupts`]) and call
-//! [`I2s::on_interrupt`] from the handler. The AHB-GDMA channel is the
-//! caller's choice ([`Config::dma_channel`]).
+//! [`I2s::on_interrupt`] from the handler; it is raised every
+//! [`Config::descs_per_eof`] TX descriptors and serves RX too (both run on
+//! the same clock). The AHB-GDMA channel is the caller's choice
+//! ([`Config::dma_channel`]).
 //!
 //! - TX: a ring of [`TX_DESCS`] descriptors of [`DESC_LEN`] bytes the DMA
-//!   loops over forever. Every descriptor carries `suc_eof`, so the DMA's
-//!   EOF address register tells how far it has read. `poll` clears each
-//!   descriptor the DMA has finished to **silence** and hands it to the
-//!   program ([`I2s::push`]). If the program stops pushing, TX keeps
-//!   running and plays silence — provided `poll` runs at least once per
-//!   ring period ([`I2s::tx_ring_us`], about 85 ms at 48 kHz); otherwise
-//!   the stale ring contents repeat. Latency is at most one ring.
+//!   loops over forever. Every [`Config::descs_per_eof`]-th descriptor
+//!   carries `suc_eof`, so the DMA's EOF address register tells how far it
+//!   has read (modulo the ring); the elapsed time since `start` tells which
+//!   lap, so `poll` may come late by any amount without losing count. `poll`
+//!   clears each descriptor the DMA has finished to **silence** and hands
+//!   it to the program ([`I2s::push`]). If the program stops pushing, TX
+//!   keeps running and plays silence. While `poll` does not run for longer
+//!   than a ring period ([`I2s::tx_ring_us`], about 85 ms at 48 kHz), what
+//!   was pushed ahead plays again on each lap; the first `poll` afterwards
+//!   clears the whole ring ([`Stats::tx_laps_lost`]). Latency is at most
+//!   one ring.
 //! - RX: a ring of [`RX_DESCS`] descriptors. The DMA writes the received
 //!   length into each descriptor and clears its owner bit when it closes
 //!   it; [`I2s::pop`] copies from closed descriptors in order (any length,
 //!   so no byte is lost when a descriptor is closed early) and hands each
 //!   one back once it is empty. The program must read at least once per
-//!   ring period, or the DMA overwrites unread data
-//!   ([`Stats::rx_overruns`]).
+//!   RX ring period (about 43 ms at 48 kHz: the DMA closes descriptors at
+//!   256 bytes), or the DMA overwrites unread data; `poll` then counts
+//!   [`Stats::rx_overruns`] and skips to the oldest data still intact.
+//!
+//! # Previous programs
+//! A SoC reset does not stop the AHB GDMA or I2S: a stream left by the
+//! previous program keeps writing into L2MEM. [`halt_stale`] stops it; the
+//! `rt` entry calls it before zeroing `.bss`.
 //!
 //! The CPU touches the rings through the non-cacheable alias of L2MEM, so
 //! no cache maintenance is needed.
@@ -220,13 +232,22 @@ pub struct Config {
     /// AHB-GDMA channel (0..[`ahb_dma::CHANNELS`]) for both directions; the
     /// caller picks one no other driver uses.
     pub dma_channel: usize,
+    /// TX descriptors per `suc_eof`: how often the DMA reports progress and
+    /// raises the TX interrupt. 1, 2, 4 or 8 ([`MAX_DESCS_PER_EOF`]); one
+    /// descriptor is [`DESC_LEN`] bytes (2.67 ms at 48 kHz). Larger means
+    /// fewer interrupts but TX room freed in larger steps.
+    pub descs_per_eof: usize,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Config { sample_rate: 48_000, dma_channel: 0 }
+        Config { sample_rate: 48_000, dma_channel: 0, descs_per_eof: 1 }
     }
 }
+
+/// Largest [`Config::descs_per_eof`]: 8 descriptors are 21 ms at 48 kHz,
+/// half the RX ring (which the interrupt also serves).
+pub const MAX_DESCS_PER_EOF: usize = 8;
 
 /// Configuration error.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -235,14 +256,32 @@ pub enum Error {
     SampleRate,
     /// No such AHB-GDMA channel.
     DmaChannel,
+    /// [`Config::descs_per_eof`] is not 1, 2, 4 or 8.
+    DescsPerEof,
+}
+
+/// Stops an I2S0 stream a previous program left running (across a SoC
+/// reset): I2S0's TX / RX and every AHB-GDMA channel
+/// ([`ahb_dma::halt_all`]). Touches no RAM, so it may run before `.bss` is
+/// set up; the `rt` entry calls it first thing. Boot time only: it also
+/// stops DMA channels a running OS uses.
+pub fn halt_stale() {
+    if unsafe { rd(SOC_CLK_CTRL2) } & I2S0_APB_CLK_EN != 0 {
+        unsafe { wr(INT_ENA, 0) };
+        clear_bits(TX_CONF, C_START);
+        clear_bits(RX_CONF, C_START);
+    }
+    ahb_dma::halt_all();
 }
 
 /// Interrupt-matrix sources of the I2S DMA (rev v1 numbering).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct InterruptSources {
-    /// TX direction: raised per TX descriptor sent ([`ahb_dma::TX_INT_EOF`]).
+    /// TX direction: raised every [`Config::descs_per_eof`] TX descriptors
+    /// ([`ahb_dma::TX_INT_EOF`]); the one to route.
     pub tx: u32,
-    /// RX direction: raised per RX descriptor closed ([`ahb_dma::RX_INT_SUC_EOF`]).
+    /// RX direction: raised only on a descriptor error
+    /// ([`ahb_dma::RX_INT_DSCR_ERR`]); routing it is optional.
     pub rx: u32,
 }
 
@@ -309,6 +348,18 @@ fn coefficients(b: u32, a: u32) -> (u32, u32, u32, u32) {
     (a / z - 1, a % z, z, yn1)
 }
 
+/// The absolute count of finished TX descriptors, from its value modulo the
+/// ring (`pos`, from the EOF address), an estimate by the clock (`est`) and
+/// the count known so far (`done`): the value `≡ pos` within half a ring of
+/// the estimate, never below `done`. The estimate is off by a few
+/// descriptors at most (FIFO lead, [`Config::descs_per_eof`] steps; both
+/// clocks come from the same crystal, so it does not drift).
+fn resolve_lap(pos: usize, est: u64, done: u64) -> u64 {
+    let r = TX_DESCS as u64;
+    let lo = est.saturating_sub(r / 2).max(done);
+    lo + (pos as u64 + r - lo % r) % r
+}
+
 /// What [`I2s::poll`] reports.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Status {
@@ -329,8 +380,11 @@ pub struct Stats {
     /// Bytes popped by the program.
     pub rx_bytes: u64,
     /// Times `poll` found the whole RX ring full: the DMA was overwriting
-    /// unread data.
+    /// unread data (reading resumed at the oldest intact descriptor).
     pub rx_overruns: u32,
+    /// Times `poll` found that the TX DMA had gone a whole ring or more
+    /// since the previous `poll` (the ring was cleared to silence).
+    pub tx_laps_lost: u32,
     /// RX descriptors that were closed with fewer than [`DESC_LEN`] bytes.
     pub rx_short_descs: u32,
     /// The last length of such a descriptor.
@@ -357,8 +411,14 @@ pub struct I2s {
     tx_done: u64,
     /// Absolute TX byte position the program writes next.
     tx_w: u64,
-    /// Last seen `OUT_EOF_DES_ADDR`.
-    tx_last_eof: usize,
+    /// `OUT_EOF_DES_ADDR` at `start` (left from before).
+    tx_start_eof: usize,
+    /// The EOF address has changed since `start` (it is this run's).
+    tx_eof_seen: bool,
+    /// `time::now_us` when TX started.
+    tx_t0_us: u64,
+    /// Interrupts enabled by `set_interrupts` (kept across `start`).
+    irq: bool,
     /// No pushed data is pending (an underrun is counted on the transition).
     tx_dry: bool,
     /// Next RX descriptor to read, and the bytes already read from it.
@@ -386,6 +446,9 @@ impl I2s {
         let mem = mem as *mut DmaMem as usize;
         if config.dma_channel >= ahb_dma::CHANNELS {
             return Err(Error::DmaChannel);
+        }
+        if !matches!(config.descs_per_eof, 1 | 2 | 4 | 8) {
+            return Err(Error::DescsPerEof);
         }
         let mclk = config.sample_rate.checked_mul(MCLK_MULTIPLE).ok_or(Error::SampleRate)?;
         let divider = MclkDivider::for_mclk(mclk).ok_or(Error::SampleRate)?;
@@ -470,7 +533,10 @@ impl I2s {
             running: false,
             tx_done: 0,
             tx_w: 0,
-            tx_last_eof: 0,
+            tx_start_eof: 0,
+            tx_eof_seen: false,
+            tx_t0_us: 0,
+            irq: false,
             tx_dry: true,
             rx_head: 0,
             rx_off: 0,
@@ -499,8 +565,9 @@ impl I2s {
         self.divider.mclk_mhz() / MCLK_MULTIPLE as u64
     }
 
-    /// One TX ring period in microseconds: how often [`poll`](Self::poll)
-    /// must run at least so that a starved TX plays silence.
+    /// One TX ring period in microseconds: while [`poll`](Self::poll) does
+    /// not run for longer, what was pushed ahead plays again on each lap
+    /// (the count stays right; see the module documentation).
     pub fn tx_ring_us(&self) -> u64 {
         (TX_RING / FRAME_BYTES) as u64 * 1_000_000 / self.config.sample_rate as u64
     }
@@ -513,15 +580,19 @@ impl I2s {
 
     /// (Re)builds both rings (TX all silence, nothing received) and starts
     /// both directions: the DMA first, then TX (MCLK / BCK / WS start), then
-    /// RX. Data pushed before `start` is discarded.
+    /// RX. Data pushed before `start` is discarded. Interrupts enabled with
+    /// [`set_interrupts`](Self::set_interrupts) stay enabled.
     pub fn start(&mut self) {
         if self.running {
             self.stop();
         }
         self.build_rings();
+        // `configure` masks the channel's interrupts; `apply_interrupts`
+        // below enables them again.
         self.tx.configure(ahb_dma::peri::I2S0, false);
         self.rx.configure(ahb_dma::peri::I2S0);
-        self.tx_last_eof = self.tx.eof_desc_addr();
+        self.tx_start_eof = self.tx.eof_desc_addr();
+        self.tx_eof_seen = false;
         self.tx_done = 0;
         // Descriptor 0 is the first in flight; the program may fill the rest.
         self.tx_w = DESC_LEN as u64;
@@ -540,10 +611,12 @@ impl I2s {
         time::delay_us(50);
         update(TX_CONF);
         set_bits(TX_CONF, C_START);
+        self.tx_t0_us = time::now_us();
         self.rx.start(rx_desc_addr(self.mem, 0));
         update(RX_CONF);
         set_bits(RX_CONF, C_START);
         self.running = true;
+        self.apply_interrupts();
     }
 
     /// Stops both directions (the bus clocks stop).
@@ -561,11 +634,12 @@ impl I2s {
         unsafe {
             core::ptr::write_bytes(ahb_dma::uncached(tx_buf) as *mut u8, 0, TX_RING);
         }
+        let every = self.config.descs_per_eof;
         for i in 0..TX_DESCS {
             set_desc(
                 tx_desc_addr(self.mem, i),
                 Descriptor {
-                    dw0: Descriptor::dw0(DESC_LEN, DESC_LEN, true, true),
+                    dw0: Descriptor::dw0(DESC_LEN, DESC_LEN, (i + 1) % every == 0, true),
                     buf: (tx_buf + i * DESC_LEN) as u32,
                     next: tx_desc_addr(self.mem, (i + 1) % TX_DESCS) as u32,
                 },
@@ -591,14 +665,23 @@ impl I2s {
         InterruptSources { tx: ahb_dma::tx_interrupt_source(n), rx: ahb_dma::rx_interrupt_source(n) }
     }
 
-    /// Enables (or disables) the DMA interrupts: TX on every descriptor
-    /// sent, RX on every descriptor closed (plus descriptor errors), i.e.
-    /// [`DESC_LEN`] bytes apart in each direction. The handler calls
+    /// Enables (or disables) the DMA interrupts: TX every
+    /// [`Config::descs_per_eof`] descriptors sent (375 / s at 48 kHz with
+    /// 1, 47 / s with 8), and descriptor errors in both directions. RX has
+    /// no data interrupt of its own: it runs on the TX clock, so the TX
+    /// interrupt serves it (at most [`MAX_DESCS_PER_EOF`] descriptors apart,
+    /// half the RX ring). The handler calls
     /// [`on_interrupt`](Self::on_interrupt). Without them everything works
-    /// by polling, as before.
+    /// by polling. May be called before or after [`start`](Self::start);
+    /// the setting survives `start` / [`stop`](Self::stop).
     pub fn set_interrupts(&mut self, enable: bool) {
-        let (tx, rx) = if enable {
-            (ahb_dma::TX_INT_EOF | ahb_dma::TX_INT_DSCR_ERR, ahb_dma::RX_INT_SUC_EOF | ahb_dma::RX_INT_DSCR_ERR)
+        self.irq = enable;
+        self.apply_interrupts();
+    }
+
+    fn apply_interrupts(&mut self) {
+        let (tx, rx) = if self.irq {
+            (ahb_dma::TX_INT_EOF | ahb_dma::TX_INT_DSCR_ERR, ahb_dma::RX_INT_DSCR_ERR)
         } else {
             (0, 0)
         };
@@ -621,31 +704,42 @@ impl I2s {
 
     /// Bookkeeping: hands TX descriptors the DMA has finished back to the
     /// program (cleared to silence) and checks the RX ring for an overrun.
-    /// Called by every data function; call it at least once per ring
-    /// period ([`tx_ring_us`](Self::tx_ring_us)) when not pushing or
-    /// popping. Safe to call from an interrupt handler that owns `self`
+    /// Called by every data function. It may come late by any amount (see
+    /// the module documentation), but RX must be read at least once per RX
+    /// ring period. Safe to call from an interrupt handler that owns `self`
     /// (see [`on_interrupt`](Self::on_interrupt)).
     pub fn poll(&mut self) -> Status {
         if !self.running {
             return Status::default();
         }
-        // TX: the DMA has finished every descriptor up to the EOF address.
+        // TX: the DMA has finished every descriptor up to the EOF address
+        // (the ring position); the time since `start` gives the lap.
         let eof = self.tx.eof_desc_addr();
-        if eof != self.tx_last_eof {
-            self.tx_last_eof = eof;
-            let base = tx_desc_addr(self.mem, 0);
-            if eof >= base && eof < base + TX_DESCS * 12 && (eof - base).is_multiple_of(12) {
-                let idx = (eof - base) / 12;
-                let cur = (self.tx_done % TX_DESCS as u64) as usize;
-                let n = (idx + TX_DESCS - cur) % TX_DESCS + 1;
+        if !self.tx_eof_seen && eof != self.tx_start_eof {
+            self.tx_eof_seen = true;
+        }
+        let base = tx_desc_addr(self.mem, 0);
+        if self.tx_eof_seen && eof >= base && eof < base + TX_DESCS * DESC_SIZE && (eof - base).is_multiple_of(DESC_SIZE) {
+            let idx = (eof - base) / DESC_SIZE;
+            let done = resolve_lap((idx + 1) % TX_DESCS, self.tx_descs_by_time(), self.tx_done);
+            if done > self.tx_done {
+                let n = done - self.tx_done;
                 let buf = ahb_dma::uncached(tx_buf_addr(self.mem));
-                for k in 0..n {
-                    let d = (cur + k) % TX_DESCS;
-                    unsafe { core::ptr::write_bytes((buf + d * DESC_LEN) as *mut u8, 0, DESC_LEN) };
+                if n >= TX_DESCS as u64 {
+                    // A whole lap or more unseen: everything in the ring has
+                    // been played.
+                    unsafe { core::ptr::write_bytes(buf as *mut u8, 0, TX_RING) };
+                    self.stats.tx_laps_lost += 1;
+                } else {
+                    let cur = (self.tx_done % TX_DESCS as u64) as usize;
+                    for k in 0..n as usize {
+                        let d = (cur + k) % TX_DESCS;
+                        unsafe { core::ptr::write_bytes((buf + d * DESC_LEN) as *mut u8, 0, DESC_LEN) };
+                    }
                 }
                 fence(Ordering::SeqCst);
-                self.tx_done += n as u64;
-                self.stats.tx_descs_done = self.tx_done;
+                self.tx_done = done;
+                self.stats.tx_descs_done = done;
             }
         }
         // The descriptor after the last finished one is in flight.
@@ -657,12 +751,31 @@ impl I2s {
             }
             self.tx_w = min_w;
         }
-        // RX: all descriptors closed means the DMA is overwriting unread data.
-        let (avail, full) = self.rx_scan();
+        // RX: all descriptors closed means the DMA is overwriting unread
+        // data. Resume at the oldest intact descriptor (the one after the
+        // DMA's), and give the DMA's back so the ring no longer looks full.
+        let (mut avail, full) = self.rx_scan();
         if full {
             self.stats.rx_overruns += 1;
+            let cur = self.rx.current_desc_addr();
+            let rbase = rx_desc_addr(self.mem, 0);
+            if cur >= rbase && cur < rbase + RX_DESCS * DESC_SIZE && (cur - rbase).is_multiple_of(DESC_SIZE) {
+                let i = (cur - rbase) / DESC_SIZE;
+                set_dw0(rx_desc_addr(self.mem, i), Descriptor::dw0(DESC_LEN, 0, false, true));
+                self.rx_head = (i + 1) % RX_DESCS;
+                self.rx_off = 0;
+                fence(Ordering::SeqCst);
+                avail = self.rx_scan().0;
+            }
         }
         Status { tx_space: self.tx_space_raw(), rx_available: avail }
+    }
+
+    /// TX descriptors the bus has consumed since `start`, by the clock.
+    fn tx_descs_by_time(&self) -> u64 {
+        let us = time::now_us().saturating_sub(self.tx_t0_us) as u128;
+        let bytes = us * self.actual_sample_rate_mhz() as u128 * FRAME_BYTES as u128 / 1_000_000_000;
+        (bytes / DESC_LEN as u128) as u64
     }
 
     fn tx_space_raw(&self) -> usize {

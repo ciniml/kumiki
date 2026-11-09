@@ -539,6 +539,7 @@ pub mod tab5 {
             let cfg = I2sConfig {
                 sample_rate: i2s0::SAMPLE_RATE.unwrap_or(48_000),
                 dma_channel: i2s0::DMA_CHANNEL.unwrap_or(0) as usize,
+                ..I2sConfig::default()
             };
             let mut i2s = I2s::new(p.i2s0, pins, cfg).map_err(|_| InitError::Config)?;
             i2s.start();

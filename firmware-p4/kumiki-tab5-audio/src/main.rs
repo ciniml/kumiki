@@ -9,8 +9,13 @@
 //!
 //! After 1 s of silence it plays a 1 kHz sine for 2 s (plus the ring
 //! pre-fill), then silence. Once per second it prints the frames received
-//! per second and the peak / RMS of both mic channels; after the tone, the
-//! measured TX rate (pushing 2 s of samples once the ring is full).
+//! per second and the peak / RMS of both mic channels, the 1 kHz component
+//! in the mic and the TX EOF interrupts per second (every
+//! [`EOF_EVERY`] descriptors; enabled before `start`, which must keep
+//! them); after the tone, the measured TX rate (pushing 2 s of samples once
+//! the ring is full). At 7 s (silence) and 10 s (during a second tone) it
+//! stops touching the driver for [`STALL_US`], longer than the TX ring, and
+//! prints the lap count `poll` recovers against the clock.
 
 #![no_std]
 #![no_main]
@@ -103,6 +108,11 @@ const PERIOD: usize = 48;
 const FS: u32 = 48_000;
 /// Tone length after the ring pre-fill.
 const TONE_FRAMES: u64 = 2 * FS as u64;
+/// TX descriptors per DMA EOF / interrupt (`i2s::Config::descs_per_eof`).
+const EOF_EVERY: usize = 4;
+/// How long the stall tests go without touching the driver (more than the
+/// 85 ms TX ring).
+const STALL_US: u64 = 200_000;
 
 fn bulk_write(i2c: &mut I2c, addr: u8, name: &str, regs: &[(u8, u8)]) {
     let mut failed = 0;
@@ -214,7 +224,8 @@ fn main() -> ! {
         dout: p.pins.gpio26.into(),
         din: p.pins.gpio28.into(),
     };
-    let mut i2s = match I2s::new(p.i2s0, pins, i2s::Config { sample_rate: FS, ..Default::default() }) {
+    let cfg = i2s::Config { sample_rate: FS, descs_per_eof: EOF_EVERY, ..Default::default() };
+    let mut i2s = match I2s::new(p.i2s0, pins, cfg) {
         Ok(i) => i,
         Err(e) => panic!("i2s: {e:?}"),
     };
@@ -229,7 +240,14 @@ fn main() -> ! {
         fs_mhz % 1000,
         i2s.tx_ring_us()
     );
+    // Enabled before `start` on purpose: it must survive it. No CPU
+    // interrupt is routed; the loop counts the raised EOF bit instead.
+    i2s.set_interrupts(true);
     i2s.start();
+    let t_start = time::now_us();
+    // OUT_INT_ENA of the channel (AHB-GDMA base + 0x30 + 0x8).
+    let ena = unsafe { core::ptr::read_volatile((0x5008_5000 + 0x30 + 0x8 + 0x10 * cfg.dma_channel) as *const u32) };
+    println!("tx int enable after start: {ena:#x} (expected 0x6)");
     time::delay_us(10_000);
 
     bulk_write(&mut i2c, ES8388, "es8388", ES8388_INIT);
@@ -238,6 +256,13 @@ fn main() -> ! {
         println!("es7210: reset write failed: {e:?}");
     }
     bulk_write(&mut i2c, ES7210, "es7210", ES7210_INIT);
+    // The ES8388 can stay silent after its init (SoC reset); powering it
+    // down briefly and configuring it again brings it back (tab5-os).
+    time::delay_us(100_000);
+    let _ = i2c.write(ES8388, &[4, 0xC0]);
+    let _ = i2c.write(ES8388, &[2, 0xFF]);
+    time::delay_us(2_000);
+    bulk_write(&mut i2c, ES8388, "es8388 (again)", ES8388_INIT);
 
     // One period of the sine, by rotating a unit vector 7.5 degrees a step.
     let (c, s) = (0.991_444_86_f32, 0.130_526_19_f32);
@@ -264,8 +289,40 @@ fn main() -> ! {
     let mut second = 0u32;
     let (mut det_i, mut det_q, mut det_n, mut det_n0) = (0f32, 0f32, 0u64, 0u64);
 
+    let mut irqs = 0u32;
+    let mut stalled_at = 0u32;
     loop {
         let now = time::now_us();
+        // The TX EOF interrupt, counted by hand.
+        if i2s.stats().tx_dma_int_raw & 0x2 != 0 {
+            irqs += 1;
+            i2s.on_interrupt();
+        }
+        // Stall tests: at 7 s in silence, then a second tone from 9 s with
+        // a stall at 10 s in the middle of it.
+        if second == 9 && stalled_at == 7 {
+            stalled_at = 9;
+            phase = Phase::Prefill;
+            tone_frames = 0;
+            println!("--- tone 2 on");
+        }
+        if (second == 7 || second == 10) && stalled_at != second {
+            stalled_at = second;
+            let before = i2s.stats();
+            time::delay_us(STALL_US);
+            i2s.poll();
+            let st = i2s.stats();
+            let by_time = (time::now_us() - t_start) as u128 * fs_mhz as u128 / 1_000_000_000 / (i2s::DESC_LEN / i2s::FRAME_BYTES) as u128;
+            println!(
+                "stall {} ms: laps lost {} -> {}, descs done {} -> {} (by time {by_time}), underruns {}",
+                STALL_US / 1000,
+                before.tx_laps_lost,
+                st.tx_laps_lost,
+                before.tx_descs_done,
+                st.tx_descs_done,
+                st.tx_underruns
+            );
+        }
         // TX.
         match phase {
             Phase::Baseline if now - t_boot >= 1_000_000 => {
@@ -349,7 +406,8 @@ fn main() -> ! {
             // Amplitude of the 1 kHz component in the mic signal (LSB).
             let frames = (det_n - det_n0).max(1) as f32;
             let mag = isqrt(((det_i * det_i + det_q * det_q) / (frames * frames)) as u64) as f32 * 2.0 / AMP;
-            println!("    1 kHz in mic: {mag:.1} LSB");
+            println!("    1 kHz in mic: {mag:.1} LSB, tx eof interrupts {irqs}/s, laps lost {}", st.tx_laps_lost);
+            irqs = 0;
             (det_i, det_q, det_n0) = (0.0, 0.0, det_n);
             lv = Levels::default();
             if let Some((frames, us)) = tx_rate_report.take() {

@@ -106,6 +106,11 @@ pub trait Speaker {
     fn idle(&mut self) -> Result<(), Self::Error>;
     /// Volume, 0 = mute, 255 = full.
     fn set_volume(&mut self, level: u8) -> Result<(), Self::Error>;
+    /// Re-initialises the output hardware (the codec), to recover from a
+    /// state its registers do not show. Does nothing by default.
+    fn restart(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 /// Audio input (microphone ADC), 16-bit stereo PCM.
