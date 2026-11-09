@@ -1220,6 +1220,8 @@ dependencies = [
  "esp32s3",
  "kumiki-bmi270",
  "kumiki-class",
+ "kumiki-es7210",
+ "kumiki-es8388",
  "kumiki-gfx",
  "kumiki-gfx-bus-esp",
  "kumiki-gfx-panels",
@@ -1247,6 +1249,20 @@ dependencies = [
  "kumiki-boards",
  "kumiki-class",
  "kumiki-gfx",
+]
+
+[[package]]
+name = "kumiki-es7210"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal 1.0.0",
+]
+
+[[package]]
+name = "kumiki-es8388"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal 1.0.0",
 ]
 
 [[package]]

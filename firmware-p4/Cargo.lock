@@ -101,6 +101,8 @@ dependencies = [
  "embedded-hal-bus",
  "kumiki-bmi270",
  "kumiki-class",
+ "kumiki-es7210",
+ "kumiki-es8388",
  "kumiki-gfx",
  "kumiki-gfx-panels",
  "kumiki-p4v1-hal",
@@ -110,6 +112,20 @@ dependencies = [
 
 [[package]]
 name = "kumiki-class"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+]
+
+[[package]]
+name = "kumiki-es7210"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+]
+
+[[package]]
+name = "kumiki-es8388"
 version = "0.1.0"
 dependencies = [
  "embedded-hal",

@@ -143,53 +143,24 @@ impl I2sIn {
     }
 }
 
-/// Everest ES7210 microphone ADC fed into [`I2sIn`].
+/// Everest ES7210 microphone ADC ([`kumiki_es7210`]) fed into [`I2sIn`].
 pub struct Es7210<I> {
-    _i2c: I,
+    codec: kumiki_es7210::Es7210<I>,
     input: I2sIn,
 }
 
 impl<I: I2c> Es7210<I> {
-    /// Resets and configures the ADC (MIC1 / MIC2, gain 0x1B, I²S slave)
-    /// with M5Unified's register sequence, then records from `input`.
-    pub fn new(mut i2c: I, addr: u8, input: I2sIn) -> Result<Self, I::Error> {
-        const SEQ: [(u8, u8); 31] = [
-            (0x00, 0xFF), // RESET_CTL: reset
-            (0x00, 0x41), // RESET_CTL
-            (0x01, 0x1F), // CLK_ON_OFF
-            (0x06, 0x00), // DIGITAL_PDN
-            (0x07, 0x20), // ADC_OSR
-            (0x08, 0x10), // MODE_CFG
-            (0x09, 0x30), // TCT0_CHPINI
-            (0x0A, 0x30), // TCT1_CHPINI
-            (0x20, 0x0A), // ADC34_HPF2
-            (0x21, 0x2A), // ADC34_HPF1
-            (0x22, 0x0A), // ADC12_HPF2
-            (0x23, 0x2A), // ADC12_HPF1
-            (0x02, 0xC1),
-            (0x04, 0x01),
-            (0x05, 0x00),
-            (0x11, 0x60),
-            (0x40, 0x42), // ANALOG_SYS
-            (0x41, 0x70), // MICBIAS12
-            (0x42, 0x70), // MICBIAS34
-            (0x43, 0x1B), // MIC1_GAIN
-            (0x44, 0x1B), // MIC2_GAIN
-            (0x45, 0x00), // MIC3_GAIN
-            (0x46, 0x00), // MIC4_GAIN
-            (0x47, 0x00), // MIC1_LP
-            (0x48, 0x00), // MIC2_LP
-            (0x49, 0x00), // MIC3_LP
-            (0x4A, 0x00), // MIC4_LP
-            (0x4B, 0x00), // MIC12_PDN
-            (0x4C, 0xFF), // MIC34_PDN
-            (0x01, 0x14), // CLK_ON_OFF
-            (0x01, 0x14),
-        ];
-        for (reg, v) in SEQ {
-            i2c.write(addr, &[reg, v])?;
-        }
-        Ok(Self { _i2c: i2c, input })
+    /// Resets and configures the ADC (MIC1 / MIC2, I²S slave), then records
+    /// from `input` (whose controller already supplies MCLK).
+    pub fn new(i2c: I, addr: u8, input: I2sIn) -> Result<Self, kumiki_es7210::Error<I::Error>> {
+        let mut codec = kumiki_es7210::Es7210::new(i2c, addr);
+        codec.init()?;
+        Ok(Self { codec, input })
+    }
+
+    /// The codec (gain).
+    pub fn codec(&mut self) -> &mut kumiki_es7210::Es7210<I> {
+        &mut self.codec
     }
 
     /// The I²S stream (diagnostics).

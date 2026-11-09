@@ -125,6 +125,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "kumiki-es7210"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+]
+
+[[package]]
+name = "kumiki-es8388"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+]
+
+[[package]]
 name = "kumiki-gfx"
 version = "0.1.0"
 dependencies = [
