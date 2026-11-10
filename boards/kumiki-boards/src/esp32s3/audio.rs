@@ -6,7 +6,9 @@
 //!   controller node and handed to the devices on it.
 //! * [`I2sOut`] / [`I2sIn`]: DMA stream buffers (esp-hal `DmaTxStreamBuf` /
 //!   `DmaRxStreamBuf`). A TX stream that runs dry, or an RX stream that
-//!   overflows, stops; both restart on the next use.
+//!   overflows, stops; both restart on the next use. The controller runs in
+//!   esp-hal's async mode: the blocking methods poll, the `*_async` ones
+//!   await the DMA's EOF interrupts (doc/14 §3).
 //! * [`Aw88298`]: Awinic AW88298 class-D amplifier (CoreS3).
 //! * [`Es7210`]: Everest ES7210 4-channel microphone ADC (CoreS3).
 //!
@@ -15,11 +17,11 @@
 
 use embedded_hal::i2c::I2c;
 use esp_hal::{
-    Blocking,
+    Async,
     dma::{DmaRxStreamBuf, DmaTxStreamBuf},
     i2s::master::{I2sRx, I2sRxDmaTransfer, I2sTx, I2sTxDmaTransfer},
 };
-use kumiki_class::{Microphone, Speaker};
+use kumiki_class::{AsyncMicrophone, AsyncSpeaker, Microphone, Speaker};
 
 /// The two directions of one I²S controller, taken by the devices on it.
 pub struct I2sPorts {
@@ -28,14 +30,14 @@ pub struct I2sPorts {
     /// Sample rate in Hz (both directions).
     pub rate: u32,
     /// Transmit side (to an amplifier / DAC).
-    pub tx: Option<I2sTx<'static, Blocking>>,
+    pub tx: Option<I2sTx<'static, Async>>,
     /// Receive side (from a microphone ADC).
-    pub rx: Option<I2sRx<'static, Blocking>>,
+    pub rx: Option<I2sRx<'static, Async>>,
 }
 
 /// I²S input stream (16-bit stereo).
 pub struct I2sIn {
-    xfer: Option<I2sRxDmaTransfer<'static, Blocking, DmaRxStreamBuf>>,
+    xfer: Option<I2sRxDmaTransfer<'static, Async, DmaRxStreamBuf>>,
     rate: u32,
     instance: &'static str,
     /// When data last arrived.
@@ -91,22 +93,27 @@ fn fix_duplex_config(instance: &str) {
 
 impl I2sIn {
     /// Starts recording into `buf` on `rx` (controller `instance`) at `rate` Hz.
-    pub fn new(rx: I2sRx<'static, Blocking>, buf: DmaRxStreamBuf, rate: u32, instance: &'static str) -> Option<Self> {
+    pub fn new(rx: I2sRx<'static, Async>, buf: DmaRxStreamBuf, rate: u32, instance: &'static str) -> Option<Self> {
         let xfer = rx.read(buf).ok()?;
         fix_duplex_config(instance);
         Some(Self { xfer: Some(xfer), rate, instance, last_data: esp_hal::time::Instant::now(), carry: [0; 4], carry_len: 0, restarts: 0 })
     }
 
+    /// Overflowed and stopped: restart (the frames in between are lost).
+    fn restart(&mut self) {
+        let Some(x) = self.xfer.take() else { return };
+        let (rx, buf) = x.stop();
+        self.restarts += 1;
+        self.xfer = rx.read(buf).ok();
+        fix_duplex_config(self.instance);
+        self.last_data = esp_hal::time::Instant::now();
+        self.carry_len = 0;
+    }
+
     /// Moves the recorded frames into `out`; returns how many.
     pub fn read(&mut self, out: &mut [[i16; 2]]) -> usize {
         if self.xfer.is_some() && self.last_data.elapsed().as_millis() > RX_STALL_MS {
-            // Overflowed and stopped: restart (the frames in between are lost).
-            let (rx, buf) = self.xfer.take().unwrap().stop();
-            self.restarts += 1;
-            self.xfer = rx.read(buf).ok();
-            fix_duplex_config(self.instance);
-            self.last_data = esp_hal::time::Instant::now();
-            self.carry_len = 0;
+            self.restart();
         }
         let Some(x) = self.xfer.as_mut() else { return 0 };
         let mut n = 0;
@@ -135,6 +142,22 @@ impl I2sIn {
             self.last_data = esp_hal::time::Instant::now();
         }
         n
+    }
+
+    /// Waits for recorded frames (a descriptor's EOF), then moves them into
+    /// `out`; returns how many (at least one unless `out` is empty).
+    pub async fn read_async(&mut self, out: &mut [[i16; 2]]) -> usize {
+        loop {
+            let n = self.read(out);
+            if n > 0 || out.is_empty() {
+                return n;
+            }
+            let Some(x) = self.xfer.as_mut() else { return 0 };
+            if x.wait_for_available_async().await.is_err() {
+                // All descriptors full (DescriptorEmpty): the DMA stopped.
+                self.restart();
+            }
+        }
     }
 
     /// Sample rate in Hz.
@@ -191,10 +214,16 @@ impl<I: I2c> Microphone for Es7210<I> {
     }
 }
 
+impl<I: I2c> AsyncMicrophone for Es7210<I> {
+    async fn read_async(&mut self, out: &mut [[i16; 2]]) -> Result<usize, I::Error> {
+        Ok(self.input.read_async(out).await)
+    }
+}
+
 /// I²S output stream (16-bit stereo).
 pub struct I2sOut {
     /// `Some` while streaming; the parts while (re)starting.
-    xfer: Option<I2sTxDmaTransfer<'static, Blocking, DmaTxStreamBuf>>,
+    xfer: Option<I2sTxDmaTransfer<'static, Async, DmaTxStreamBuf>>,
     rate: u32,
     /// Software volume, 0–256.
     gain: i32,
@@ -202,46 +231,82 @@ pub struct I2sOut {
     pub restarts: u32,
 }
 
+/// Writes `frames` (scaled by `gain`, 0–256) into `out` as 16-bit LE
+/// stereo; returns how many fit.
+fn put_frames(out: &mut [u8], frames: &[[i16; 2]], gain: i32) -> usize {
+    let n = (out.len() / 4).min(frames.len());
+    for (k, f) in frames[..n].iter().enumerate() {
+        let l = ((f[0] as i32 * gain) >> 8) as i16;
+        let r = ((f[1] as i32 * gain) >> 8) as i16;
+        out[k * 4..k * 4 + 2].copy_from_slice(&l.to_le_bytes());
+        out[k * 4 + 2..k * 4 + 4].copy_from_slice(&r.to_le_bytes());
+    }
+    n
+}
+
 impl I2sOut {
     /// Starts streaming `buf` (zero-filled = silence) on `tx` at `rate` Hz.
-    pub fn new(tx: I2sTx<'static, Blocking>, buf: DmaTxStreamBuf, rate: u32) -> Option<Self> {
+    pub fn new(tx: I2sTx<'static, Async>, buf: DmaTxStreamBuf, rate: u32) -> Option<Self> {
         let xfer = tx.write(buf).ok()?;
         Some(Self { xfer: Some(xfer), rate, gain: 256, restarts: 0 })
     }
 
-    fn transfer(&mut self) -> &mut I2sTxDmaTransfer<'static, Blocking, DmaTxStreamBuf> {
-        if self.xfer.as_ref().is_some_and(|x| x.is_done()) {
-            // Ran dry: restart the stream (what is left in the buffer plays once).
-            let (tx, buf) = self.xfer.take().unwrap().stop();
-            self.restarts += 1;
-            self.xfer = tx.write(buf).ok();
+    /// If the stream ran dry, restarts it with `frames` first (padded with
+    /// silence to two descriptors, the least the DMA starts with) instead of
+    /// the stale buffer; returns how many of `frames` it took.
+    fn restart_if_dry(&mut self, frames: &[[i16; 2]]) -> usize {
+        if !self.xfer.as_ref().is_some_and(|x| x.is_done()) {
+            return 0;
         }
-        self.xfer.as_mut().expect("I2S stream could not be restarted")
+        let (tx, buf) = self.xfer.take().unwrap().stop();
+        let (descs, mut mem) = buf.split();
+        let min = 2 * (mem.len() / descs.len());
+        let n = put_frames(&mut mem, frames, self.gain);
+        let filled = (n * 4).max(min).min(mem.len());
+        mem[n * 4..filled].fill(0);
+        let mut buf = DmaTxStreamBuf::new(descs, mem).expect("same descriptors and buffer");
+        // Mark the bytes written above as pre-filled (sent first, the rest
+        // of the ring is the CPU's to push into).
+        buf.push_with(|_| filled);
+        self.restarts += 1;
+        self.xfer = Some(tx.write(buf).ok().expect("I2S stream could not be restarted"));
+        n
     }
 
-    /// Pushes `frames`, waiting for room as needed.
-    pub fn play(&mut self, frames: &[[i16; 2]]) {
+    /// Pushes as much of `frames` as there is room for; returns how many.
+    fn push(&mut self, frames: &[[i16; 2]]) -> usize {
+        let taken = self.restart_if_dry(frames);
         let gain = self.gain;
+        let x = self.xfer.as_mut().expect("I2S stream");
+        taken + x.push_with(|out| put_frames(out, &frames[taken..], gain) * 4) / 4
+    }
+
+    /// Pushes `frames`, waiting (polling) for room as needed.
+    pub fn play(&mut self, frames: &[[i16; 2]]) {
         let mut i = 0;
         while i < frames.len() {
-            let x = self.transfer();
-            let pushed = x.push_with(|out| {
-                let n = (out.len() / 4).min(frames.len() - i);
-                for (k, f) in frames[i..i + n].iter().enumerate() {
-                    let l = ((f[0] as i32 * gain) >> 8) as i16;
-                    let r = ((f[1] as i32 * gain) >> 8) as i16;
-                    out[k * 4..k * 4 + 2].copy_from_slice(&l.to_le_bytes());
-                    out[k * 4 + 2..k * 4 + 4].copy_from_slice(&r.to_le_bytes());
-                }
-                n * 4
-            });
-            i += pushed / 4;
+            i += self.push(&frames[i..]);
+        }
+    }
+
+    /// Pushes `frames`, awaiting room (the DMA's EOF interrupt) as needed.
+    pub async fn play_async(&mut self, frames: &[[i16; 2]]) {
+        let mut i = 0;
+        while i < frames.len() {
+            let n = self.push(&frames[i..]);
+            i += n;
+            if n == 0 {
+                // An error means the stream ran dry (TotalEof); the next
+                // push restarts it.
+                let _ = self.xfer.as_mut().expect("I2S stream").wait_for_available_async().await;
+            }
         }
     }
 
     /// Tops the stream up with silence.
     pub fn idle(&mut self) {
-        let x = self.transfer();
+        self.restart_if_dry(&[]);
+        let x = self.xfer.as_mut().expect("I2S stream");
         x.push_with(|out| {
             let n = out.len() & !3;
             out[..n].fill(0);
@@ -325,6 +390,13 @@ impl<I: I2c> Speaker for Aw88298<I> {
     fn set_volume(&mut self, level: u8) -> Result<(), I::Error> {
         // Software gain; the amplifier stays at its full setting.
         self.out.gain = level as i32 + (level as i32 >> 7);
+        Ok(())
+    }
+}
+
+impl<I: I2c> AsyncSpeaker for Aw88298<I> {
+    async fn play_async(&mut self, frames: &[[i16; 2]]) -> Result<(), I::Error> {
+        self.out.play_async(frames).await;
         Ok(())
     }
 }

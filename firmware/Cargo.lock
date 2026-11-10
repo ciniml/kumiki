@@ -1181,6 +1181,7 @@ dependencies = [
  "esp-println",
  "esp-rtos",
  "kumiki-boards",
+ "kumiki-class",
  "kumiki-gfx",
  "static_cell",
 ]

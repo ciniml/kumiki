@@ -127,6 +127,30 @@ pub trait Microphone {
     fn read(&mut self, out: &mut [[i16; 2]]) -> Result<usize, Self::Error>;
 }
 
+/// [`Speaker`] that waits for room without blocking the executor: the
+/// future is woken by the output DMA (any executor, no time driver).
+///
+/// Overlap work with playback by joining futures, e.g.
+/// `join(synthesize(&mut next), spk.play_async(&cur))`.
+///
+/// If no frames are queued before the queue drains, the output stops (and
+/// with it BCK / WS, which a microphone on the same controller needs); the
+/// next `play_async` restarts it behind one queue length of silence. Keep
+/// playing (or call [`Speaker::idle`]) while recording.
+#[allow(async_fn_in_trait)]
+pub trait AsyncSpeaker: Speaker {
+    /// Queue `frames` (left, right); resolves once all are queued.
+    async fn play_async(&mut self, frames: &[[i16; 2]]) -> Result<(), Self::Error>;
+}
+
+/// [`Microphone`] that waits for input without blocking the executor.
+#[allow(async_fn_in_trait)]
+pub trait AsyncMicrophone: Microphone {
+    /// Wait until frames are recorded, then move them into `out` (left,
+    /// right); returns how many (at least one, unless `out` is empty).
+    async fn read_async(&mut self, out: &mut [[i16; 2]]) -> Result<usize, Self::Error>;
+}
+
 /// A backlight that is only switched on and off by a GPIO.
 pub struct GpioBacklight<P>(pub P);
 

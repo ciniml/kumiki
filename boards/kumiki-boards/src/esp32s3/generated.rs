@@ -774,7 +774,7 @@ pub mod cores3 {
                 .with_data_format(DataFormat::Data16Channel16)
                 .with_channels(Channels::STEREO)
                 .with_signal_loopback(true);
-            let i2s = I2s::new(p.I2S1, p.DMA_CH1, cfg).map_err(|_| InitError::Config)?.with_mclk(pins.i2s1_mclk);
+            let i2s = I2s::new(p.I2S1, p.DMA_CH1, cfg).map_err(|_| InitError::Config)?.into_async().with_mclk(pins.i2s1_mclk);
             let tx = i2s.i2s_tx.with_bclk(pins.i2s1_bclk).with_ws(pins.i2s1_ws).with_dout(pins.i2s1_dout).build();
             let rx = i2s.i2s_rx.with_din(pins.i2s1_din).build();
             audio::I2sPorts { instance: i2s1::INSTANCE, rate, tx: Some(tx), rx: Some(rx) }

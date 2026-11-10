@@ -4,7 +4,11 @@
 //! * [`render_loop`] draws a frame into a RAM [`Sprite`] (CPU) and pushes it
 //!   with `AsyncFastDraw::blit` (DMA, awaited via interrupt + waker);
 //! * [`monitor`] spins a counter and yields; its rate shows how much CPU time
-//!   is left while frames are on the wire, and it prints the statistics.
+//!   is left while frames are on the wire, and it prints the statistics;
+//! * [`audio_loop`] (boards with a speaker and a microphone) plays a quiet
+//!   1 kHz beep with `AsyncSpeaker::play_async` while recording with
+//!   `AsyncMicrophone::read_async`, and prints the rates and the 1 kHz level
+//!   heard during the beep and during the silence.
 //!
 //! Nothing here depends on an executor, a time driver or an allocator.
 #![no_std]
@@ -25,7 +29,8 @@ use embedded_graphics::{
 };
 use esp_hal::time::Instant;
 use esp_println::println;
-use kumiki_boards::AnyAsyncDisplay;
+use kumiki_boards::{AnyAsyncDisplay, AnyMicrophone, AnySpeaker};
+use kumiki_class::{AsyncMicrophone, AsyncSpeaker, Microphone, Speaker};
 use kumiki_gfx::{AsyncFastDraw, FastDraw, Rgb565Be, Sprite};
 
 /// Largest panel of the family (CoreS3).
@@ -172,4 +177,125 @@ pub async fn monitor(label: &'static str) -> ! {
             last = Instant::now();
         }
     }
+}
+
+/// Frames moved by [`audio_loop`] since the last report.
+static TX_FRAMES: AtomicU32 = AtomicU32::new(0);
+static RX_FRAMES: AtomicU32 = AtomicU32::new(0);
+/// The player is in the beep part of its cycle.
+static BEEP_ON: AtomicBool = AtomicBool::new(false);
+
+/// Goertzel power of `freq` Hz in `x`, normalized by the window length.
+fn goertzel(x: &[[i16; 2]], freq: f32, rate: f32) -> f32 {
+    let w = 2.0 * core::f32::consts::PI * freq / rate;
+    let c = 2.0 * libm_cos(w);
+    let (mut s1, mut s2) = (0.0f32, 0.0f32);
+    for f in x {
+        let s = f[0] as f32 + c * s1 - s2;
+        s2 = s1;
+        s1 = s;
+    }
+    let p = s1 * s1 + s2 * s2 - c * s1 * s2;
+    p / (x.len() as f32 * x.len() as f32)
+}
+
+/// cos for the one Goertzel coefficient (no libm in this crate).
+fn libm_cos(x: f32) -> f32 {
+    // Taylor series around 0; |x| is small (2π·1k/48k ≈ 0.13).
+    let x2 = x * x;
+    1.0 - x2 / 2.0 + x2 * x2 / 24.0 - x2 * x2 * x2 / 720.0
+}
+
+/// Beep (200 ms of 1 kHz at 1/16 full scale) and silence (800 ms), queued
+/// with `play_async`; record with `read_async`; report once per second.
+pub async fn audio_loop(mut spk: AnySpeaker, mut mic: AnyMicrophone) -> ! {
+    let rate = Speaker::sample_rate(&spk);
+    let player = async {
+        let mut chunk = [[0i16; 2]; 480]; // 10 ms at 48 kHz
+        let mut phase = 0u32;
+        let mut t = 0u32; // ms in the 1 s cycle
+        let mut last = Instant::now();
+        loop {
+            let beep = t < 200;
+            BEEP_ON.store(beep, Ordering::Relaxed);
+            for f in chunk.iter_mut() {
+                let v = if beep {
+                    // A triangle wave is fine for a 1 kHz level check.
+                    let period = (rate / 1000).max(4);
+                    let x = (phase % period) as f32 / period as f32;
+                    phase = phase.wrapping_add(1);
+                    ((4.0 * (x - 0.5).abs() - 1.0) * 2048.0) as i16
+                } else {
+                    0
+                };
+                *f = [v, v];
+            }
+            spk.play_async(&chunk).await.ok();
+            TX_FRAMES.fetch_add(chunk.len() as u32, Ordering::Relaxed);
+            t = (t + 10) % 1000;
+            if last.elapsed().as_millis() >= 1000 {
+                last = Instant::now();
+                REPORT.fire();
+            }
+        }
+    };
+    let recorder = async {
+        let mut buf = [[0i16; 2]; 256];
+        let mut win = [[0i16; 2]; 960];
+        let (mut n, mut beep_lvl, mut quiet_lvl) = (0usize, 0.0f32, 0.0f32);
+        loop {
+            let got = mic.read_async(&mut buf).await.unwrap_or(0);
+            RX_FRAMES.fetch_add(got as u32, Ordering::Relaxed);
+            for f in &buf[..got] {
+                win[n] = *f;
+                n += 1;
+                if n == win.len() {
+                    n = 0;
+                    let p = goertzel(&win, 1000.0, Microphone::sample_rate(&mic) as f32);
+                    if BEEP_ON.load(Ordering::Relaxed) {
+                        beep_lvl = beep_lvl.max(p);
+                    } else {
+                        quiet_lvl = quiet_lvl.max(p);
+                    }
+                }
+            }
+            if REPORT.take() {
+                println!(
+                    "[audio] tx {} frames/s, rx {} frames/s, 1 kHz level: beep {} / silence {}",
+                    TX_FRAMES.swap(0, Ordering::Relaxed),
+                    RX_FRAMES.swap(0, Ordering::Relaxed),
+                    beep_lvl as u32,
+                    quiet_lvl as u32
+                );
+                beep_lvl = 0.0;
+                quiet_lvl = 0.0;
+            }
+        }
+    };
+    join(player, recorder).await
+}
+
+/// "Print a report" flag, set by the player once per second.
+struct Flag(AtomicBool);
+impl Flag {
+    fn fire(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+    fn take(&self) -> bool {
+        self.0.swap(false, Ordering::Relaxed)
+    }
+}
+static REPORT: Flag = Flag(AtomicBool::new(false));
+
+/// Poll two never-ending futures in turn.
+async fn join<A: Future, B: Future>(a: A, b: B) -> ! {
+    let mut a = core::pin::pin!(a);
+    let mut b = core::pin::pin!(b);
+    core::future::poll_fn(move |cx| {
+        let _ = a.as_mut().poll(cx);
+        let _ = b.as_mut().poll(cx);
+        Poll::<()>::Pending
+    })
+    .await;
+    unreachable!()
 }

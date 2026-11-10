@@ -13,7 +13,9 @@ use embedded_graphics_core::{
 };
 use embedded_hal::delay::DelayNs as _;
 use esp_hal::delay::Delay;
-use kumiki_class::{Backlight, DateTime, DevicePm, Imu, Microphone, PmAction, Power, Rtc, Speaker, Touch, TouchPoint, Vec3};
+use kumiki_class::{
+    AsyncMicrophone, AsyncSpeaker, Backlight, DateTime, DevicePm, Imu, Microphone, PmAction, Power, Rtc, Speaker, Touch, TouchPoint, Vec3,
+};
 use kumiki_gfx::{AsyncFastDraw, FastDraw, PixelFormat, Rgb565Be};
 use kumiki_gfx_bus_esp::Error as BusError;
 
@@ -252,6 +254,18 @@ impl Microphone for AnyMicrophone {
     }
     fn read(&mut self, out: &mut [[i16; 2]]) -> Result<usize, AnyError> {
         any_microphone!(self, m => m.read(out).map_err(AnyError::from))
+    }
+}
+
+impl AsyncSpeaker for AnySpeaker {
+    async fn play_async(&mut self, frames: &[[i16; 2]]) -> Result<(), AnyError> {
+        any_speaker!(self, s => s.play_async(frames).await.map_err(AnyError::from))
+    }
+}
+
+impl AsyncMicrophone for AnyMicrophone {
+    async fn read_async(&mut self, out: &mut [[i16; 2]]) -> Result<usize, AnyError> {
+        any_microphone!(self, m => m.read_async(out).await.map_err(AnyError::from))
     }
 }
 

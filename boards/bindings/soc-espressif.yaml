@@ -53,6 +53,8 @@
     # Full duplex, 16-bit stereo Philips I2S, master: TX drives MCLK / BCK / WS,
     # RX shares them (signal loopback). DMA channel 1 (channel 0 belongs to the
     # display bus). The devices on it take `tx` / `rx` (`${var:i2s}`).
+    # Async DMA: the blocking API polls as before, the async one awaits the
+    # DMA interrupts (doc/14 §3).
     init: |
       {
           let rate = ${const:SAMPLE_RATE}.unwrap_or(48_000);
@@ -61,7 +63,7 @@
               .with_data_format(DataFormat::Data16Channel16)
               .with_channels(Channels::STEREO)
               .with_signal_loopback(true);
-          let i2s = I2s::new(${instance}, p.DMA_CH1, cfg).map_err(|_| InitError::Config)?.with_mclk(${pin:mclk-gpios});
+          let i2s = I2s::new(${instance}, p.DMA_CH1, cfg).map_err(|_| InitError::Config)?.into_async().with_mclk(${pin:mclk-gpios});
           let tx = i2s.i2s_tx.with_bclk(${pin:bclk-gpios}).with_ws(${pin:ws-gpios}).with_dout(${pin:dout-gpios}).build();
           let rx = i2s.i2s_rx.with_din(${pin:din-gpios}).build();
           audio::I2sPorts { instance: ${const:INSTANCE}, rate, tx: Some(tx), rx: Some(rx) }
