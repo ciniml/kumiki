@@ -25,6 +25,12 @@ pub fn dcs_config(width: u32, height: u32, offset: &[u32], invert: bool, rgb_ord
     }
 }
 
+/// Whether the first entry of a generated `*_GPIOS` constant is active-low.
+pub fn active_low(g: &[super::generated::Gpio]) -> bool {
+    use super::generated::Gpio;
+    matches!(g.first(), Some(Gpio::Chip { active_low: true, .. } | Gpio::Expander { active_low: true, .. }))
+}
+
 /// Frequency from an optional DT `clock-frequency`.
 pub fn hz(v: Option<u32>, default: u32) -> Rate {
     Rate::from_hz(v.unwrap_or(default))

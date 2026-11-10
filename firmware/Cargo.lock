@@ -1226,7 +1226,9 @@ dependencies = [
  "kumiki-gfx",
  "kumiki-gfx-bus-esp",
  "kumiki-gfx-panels",
+ "kumiki-ina226",
  "kumiki-mpu6886",
+ "kumiki-py32",
  "kumiki-rtc",
  "static_cell",
 ]
@@ -1295,12 +1297,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "kumiki-ina226"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal 1.0.0",
+]
+
+[[package]]
 name = "kumiki-mpu6886"
 version = "0.1.0"
 dependencies = [
  "embedded-hal 1.0.0",
  "embedded-hal-async",
  "kumiki-class",
+]
+
+[[package]]
+name = "kumiki-py32"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal 1.0.0",
 ]
 
 [[package]]

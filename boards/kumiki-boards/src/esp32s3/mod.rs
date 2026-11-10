@@ -11,50 +11,8 @@
 //! (`chips`, `bind`, `probe`).
 //!
 //! Regenerate after editing a DTS or binding:
-//! `cargo run -p kumiki-dtgen -- esp32s3 boards/kumiki-boards/src/esp32s3/generated.rs boards/dts/m5stack/cores3.dts boards/dts/m5stack/atoms3.dts boards/dts/m5stack/stopwatch.dts`
-
-/// Move the board-independent spare peripherals out of `Peripherals`
-/// (used by the generated `init` functions, hence defined before them).
-macro_rules! take_spare {
-    ($p:ident) => {
-        Spare {
-            timg0: $p.TIMG0,
-            timg1: $p.TIMG1,
-            systimer: $p.SYSTIMER,
-            from_cpu_intr0: $p.FROM_CPU_INTR0,
-            from_cpu_intr1: $p.FROM_CPU_INTR1,
-            from_cpu_intr2: $p.FROM_CPU_INTR2,
-            from_cpu_intr3: $p.FROM_CPU_INTR3,
-            wifi: $p.WIFI,
-            bt: $p.BT,
-            rng: $p.RNG,
-            cpu_ctrl: $p.CPU_CTRL,
-            usb_device: $p.USB_DEVICE,
-            lpwr: $p.LPWR,
-            uart0: $p.UART0,
-            uart1: $p.UART1,
-            uart2: $p.UART2,
-            spi3: $p.SPI3,
-            i2s0: $p.I2S0,
-            dma_ch2: $p.DMA_CH2,
-            dma_ch3: $p.DMA_CH3,
-            dma_ch4: $p.DMA_CH4,
-            rmt: $p.RMT,
-            ledc: $p.LEDC,
-            pcnt: $p.PCNT,
-            mcpwm0: $p.MCPWM0,
-            mcpwm1: $p.MCPWM1,
-            twai0: $p.TWAI0,
-            adc1: $p.ADC1,
-            adc2: $p.ADC2,
-            lcd_cam: $p.LCD_CAM,
-            sdhost: $p.SDHOST,
-            sha: $p.SHA,
-            aes: $p.AES,
-            rsa: $p.RSA,
-        }
-    };
-}
+//! `cargo run -p kumiki-dtgen -- esp32s3 boards/kumiki-boards/src/esp32s3/generated.rs boards/dts/m5stack/cores3-stackchan.dts boards/dts/m5stack/cores3.dts boards/dts/m5stack/atoms3.dts boards/dts/m5stack/stopwatch.dts`
+//! (a board with an add-on base comes before the bare board: detection takes the first match).
 
 #[macro_use]
 pub mod generated;
@@ -73,7 +31,8 @@ use kumiki_gfx_panels::{Co5300, DcsPanel, Gc9107, Ili9342c};
 
 pub use any::{AnyAsyncDisplay, AnyError};
 pub use generated::{
-    AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, BoardId, DetectLog, Free,
+    AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, BoardId, DetectLog, Extras, Free,
+    Spare,
 };
 
 /// Push-pull output (e.g. a GPIO backlight).
@@ -162,49 +121,13 @@ pub struct Devices {
     /// some boards of the family use them). Pins wired to hardware the
     /// device tree does not describe are listed too.
     pub free: Free,
-    /// Peripherals no board of the family uses, handed back to the
-    /// application (timers and software interrupts for an RTOS/executor,
-    /// radio, RNG, second core, UARTs, ...).
+    /// Peripherals no board of the family uses (generated), handed back to
+    /// the application (timers and software interrupts for an RTOS/executor,
+    /// radio, RNG, second core, ...).
     pub spare: Spare,
-}
-
-/// Peripherals not used by any board of this family.
-#[allow(missing_docs)]
-pub struct Spare {
-    pub timg0: esp_hal::peripherals::TIMG0<'static>,
-    pub timg1: esp_hal::peripherals::TIMG1<'static>,
-    pub systimer: esp_hal::peripherals::SYSTIMER<'static>,
-    pub from_cpu_intr0: esp_hal::peripherals::FROM_CPU_INTR0<'static>,
-    pub from_cpu_intr1: esp_hal::peripherals::FROM_CPU_INTR1<'static>,
-    pub from_cpu_intr2: esp_hal::peripherals::FROM_CPU_INTR2<'static>,
-    pub from_cpu_intr3: esp_hal::peripherals::FROM_CPU_INTR3<'static>,
-    pub wifi: esp_hal::peripherals::WIFI<'static>,
-    pub bt: esp_hal::peripherals::BT<'static>,
-    pub rng: esp_hal::peripherals::RNG<'static>,
-    pub cpu_ctrl: esp_hal::peripherals::CPU_CTRL<'static>,
-    pub usb_device: esp_hal::peripherals::USB_DEVICE<'static>,
-    pub lpwr: esp_hal::peripherals::LPWR<'static>,
-    pub uart0: esp_hal::peripherals::UART0<'static>,
-    pub uart1: esp_hal::peripherals::UART1<'static>,
-    pub uart2: esp_hal::peripherals::UART2<'static>,
-    pub spi3: esp_hal::peripherals::SPI3<'static>,
-    pub i2s0: esp_hal::peripherals::I2S0<'static>,
-    pub dma_ch2: esp_hal::peripherals::DMA_CH2<'static>,
-    pub dma_ch3: esp_hal::peripherals::DMA_CH3<'static>,
-    pub dma_ch4: esp_hal::peripherals::DMA_CH4<'static>,
-    pub rmt: esp_hal::peripherals::RMT<'static>,
-    pub ledc: esp_hal::peripherals::LEDC<'static>,
-    pub pcnt: esp_hal::peripherals::PCNT<'static>,
-    pub mcpwm0: esp_hal::peripherals::MCPWM0<'static>,
-    pub mcpwm1: esp_hal::peripherals::MCPWM1<'static>,
-    pub twai0: esp_hal::peripherals::TWAI0<'static>,
-    pub adc1: esp_hal::peripherals::ADC1<'static>,
-    pub adc2: esp_hal::peripherals::ADC2<'static>,
-    pub lcd_cam: esp_hal::peripherals::LCD_CAM<'static>,
-    pub sdhost: esp_hal::peripherals::SDHOST<'static>,
-    pub sha: esp_hal::peripherals::SHA<'static>,
-    pub aes: esp_hal::peripherals::AES<'static>,
-    pub rsa: esp_hal::peripherals::RSA<'static>,
+    /// Board-specific devices (DT `chosen { kumiki,extras }`), e.g. an
+    /// add-on base's expander, supplies and buses.
+    pub extras: Extras,
 }
 
 impl ButtonInputs {

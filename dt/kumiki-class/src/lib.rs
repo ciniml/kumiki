@@ -13,7 +13,7 @@ pub mod buttons;
 pub mod pm;
 
 pub use buttons::{ButtonEvent, ButtonId, ButtonKind, Buttons};
-pub use pm::{BootInfo, DevicePm, PmAction, Rail, RailCount, RegulatorSwitch, ResetReason, WakeCause};
+pub use pm::{BootInfo, DevicePm, GpioSwitch, PmAction, Rail, RailCount, RegulatorSwitch, ResetReason, WakeCause};
 
 /// One touch point in display coordinates (already rotated like the display).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

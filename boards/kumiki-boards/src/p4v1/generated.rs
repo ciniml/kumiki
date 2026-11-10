@@ -82,8 +82,14 @@ mod prelude {
     pub use static_cell::StaticCell;
     pub use super::super::{
         audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs,
-        boot_info, Devices, I2cBus, InitError, Spare,
+        boot_info, Devices, I2cBus, InitError, SharedI2c, Spare,
     };
+}
+
+/// Board-specific devices (DT `chosen { kumiki,extras }`) of the detected board.
+pub enum Extras {
+    /// The board has none.
+    None,
 }
 
 use super::*;
@@ -642,6 +648,7 @@ pub mod tab5 {
             microphone: microphone,
             buttons: buttons,
             i2c: Some(i2c1),
+            extras: super::Extras::None,
             spare,
         })
     }

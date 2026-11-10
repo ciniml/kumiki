@@ -1,0 +1,161 @@
+/*
+ * M5Stack CoreS3 / CoreS3 SE: the board itself, included by cores3.dts and
+ * by the variants with an add-on base (cores3-stackchan.dts).
+ * Sources: https://docs.m5stack.com/en/core/CoreS3 ,
+ *          M5GFX src/M5GFX.cpp (CoreS3 autodetect / Panel_M5StackCoreS3, MIT).
+ */
+
+#include <soc/espressif/esp32s3.dtsi>
+#include <kumiki/gpio.h>
+
+/ {
+	model = "M5Stack CoreS3";
+	compatible = "m5stack,cores3", "espressif,esp32s3";
+
+	chosen {
+		kumiki,display = &lcd;
+		kumiki,touch = &touch;
+		kumiki,imu = &imu;
+		kumiki,power = &pmic;
+		kumiki,rtc = &rtc;
+		kumiki,speaker = &speaker;
+		kumiki,microphone = &microphone;
+	};
+
+	lcd_backlight: backlight {
+		compatible = "kumiki,regulator-backlight";
+		power-supply = <&dldo1>;
+		default-brightness = <160>;
+	};
+
+	buttons {
+		compatible = "kumiki,touch-keys";
+		/* No front buttons: a touch anywhere acts as button A. */
+		touch = <&touch>;
+	};
+
+	kumiki,detect {
+		compatible = "kumiki,board-detect";
+		pmic-id {
+			compatible = "kumiki,probe-i2c-reg";
+			device = <&pmic>;
+			register = <0x03>;
+			expect = <0x4a>;
+		};
+		ioexp-id {
+			compatible = "kumiki,probe-i2c-reg";
+			device = <&ioexp>;
+			register = <0x10>;
+			expect = <0x23>;
+		};
+	};
+};
+
+&i2c0 {
+	status = "okay";
+	clock-frequency = <400000>;
+	sda-gpios = <&gpio 12 GPIO_ACTIVE_HIGH>;
+	scl-gpios = <&gpio 11 GPIO_ACTIVE_HIGH>;
+
+	pmic: pmic@34 {
+		compatible = "x-powers,axp2101";
+		reg = <0x34>;
+		system-power-controller;
+		/* As M5Unified board_M5StackCoreS3: ALDO1 AW88298, ALDO2 ES7210, ALDO3 camera/LCD, ALDO4 TF card. */
+		regulators {
+			aldo1: ALDO1 { regulator-min-microvolt = <1800000>; regulator-max-microvolt = <1800000>; regulator-boot-on; };
+			aldo2: ALDO2 { regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; regulator-boot-on; };
+			aldo3: ALDO3 { regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; regulator-boot-on; };
+			aldo4: ALDO4 { regulator-min-microvolt = <3300000>; regulator-max-microvolt = <3300000>; regulator-boot-on; };
+			bldo1: BLDO1 { regulator-boot-on; };
+			bldo2: BLDO2 { regulator-boot-on; };
+			dldo1: DLDO1 { regulator-name = "lcd-backlight"; };
+		};
+	};
+
+	ioexp: gpio@58 {
+		compatible = "awinic,aw9523b";
+		reg = <0x58>;
+		gpio-controller;
+		#gpio-cells = <2>;
+		kumiki,p0-push-pull;
+		/* Line states as set by M5GFX / M5Unified for CoreS3 (P0_n = n, P1_n = 8 + n).
+		 * Line 13 (P1_5) is the LCD reset, driven by the panel via reset-gpios. */
+		touch-reset-hog { gpio-hog; gpios = <0 GPIO_ACTIVE_HIGH>; output-high; line-name = "TOUCH_RST"; };
+		p0-1-hog { gpio-hog; gpios = <1 GPIO_ACTIVE_HIGH>; output-high; };
+		amp-reset-hog { gpio-hog; gpios = <2 GPIO_ACTIVE_HIGH>; output-high; line-name = "AW88298_RST"; };
+		p0-5-hog { gpio-hog; gpios = <5 GPIO_ACTIVE_HIGH>; output-low; };
+		p0-6-hog { gpio-hog; gpios = <6 GPIO_ACTIVE_HIGH>; output-low; };
+		p0-7-hog { gpio-hog; gpios = <7 GPIO_ACTIVE_HIGH>; output-low; };
+		camera-reset-hog { gpio-hog; gpios = <8 GPIO_ACTIVE_HIGH>; output-high; line-name = "CAM_RST"; };
+		p1-1-hog { gpio-hog; gpios = <9 GPIO_ACTIVE_HIGH>; output-high; };
+		p1-4-hog { gpio-hog; gpios = <12 GPIO_ACTIVE_HIGH>; output-low; };
+		p1-6-hog { gpio-hog; gpios = <14 GPIO_ACTIVE_HIGH>; output-low; };
+		boost-enable-hog { gpio-hog; gpios = <15 GPIO_ACTIVE_HIGH>; output-low; line-name = "BOOST_EN"; };
+	};
+
+	touch: touchscreen@38 {
+		compatible = "focaltech,ft6336u";
+		reg = <0x38>;
+		touchscreen-size-x = <320>;
+		touchscreen-size-y = <240>;
+	};
+
+	imu: imu@69 {
+		compatible = "bosch,bmi270";
+		reg = <0x69>;
+	};
+
+	rtc: rtc@51 {
+		compatible = "belling,bm8563", "nxp,pcf8563";
+		reg = <0x51>;
+	};
+
+	/* Speaker amplifier: control over I2C, audio from I2S1. Its reset /
+	 * enable is AW9523 P0.2 (amp-reset-hog above). */
+	speaker: amplifier@36 {
+		compatible = "awinic,aw88298";
+		reg = <0x36>;
+		i2s = <&i2s1>;
+		kumiki,depends-on = <&ioexp>;
+	};
+
+	/* Microphones: MIC1 / MIC2 through the ES7210 ADC on the same I2S. */
+	microphone: adc@40 {
+		compatible = "everest,es7210";
+		reg = <0x40>;
+		i2s = <&i2s1>;
+	};
+};
+
+/* Speaker out and microphone in share I2S1 and its clocks (full duplex). */
+&i2s1 {
+	status = "okay";
+	mclk-gpios = <&gpio 0 GPIO_ACTIVE_HIGH>;
+	bclk-gpios = <&gpio 34 GPIO_ACTIVE_HIGH>;
+	ws-gpios = <&gpio 33 GPIO_ACTIVE_HIGH>;
+	dout-gpios = <&gpio 13 GPIO_ACTIVE_HIGH>;
+	din-gpios = <&gpio 14 GPIO_ACTIVE_HIGH>;
+	kumiki,sample-rate = <48000>;
+};
+
+&spi2 {
+	status = "okay";
+	sck-gpios = <&gpio 36 GPIO_ACTIVE_HIGH>;
+	mosi-gpios = <&gpio 37 GPIO_ACTIVE_HIGH>;
+	cs-gpios = <&gpio 3 GPIO_ACTIVE_LOW>;
+
+	lcd: display@0 {
+		compatible = "ilitek,ili9342c";
+		reg = <0>;
+		spi-max-frequency = <40000000>;
+		/* GPIO35 doubles as SPI MISO (shared with the SD slot). */
+		dc-gpios = <&gpio 35 GPIO_ACTIVE_HIGH>;
+		reset-gpios = <&ioexp 13 GPIO_ACTIVE_LOW>; /* AW9523B P1_5 */
+		power-supply = <&aldo3>;
+		backlight = <&lcd_backlight>;
+		width = <320>;
+		height = <240>;
+		kumiki,invert;
+	};
+};

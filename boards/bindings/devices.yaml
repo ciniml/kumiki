@@ -58,6 +58,24 @@
     gpio-controller: { type: boolean, required: true }
     "#gpio-cells": { type: int, required: true }
 
+# M5Stack PY32 IO expander (Stack-chan base). Boots slowly: probe it with
+# `kumiki,boot-time-ms` before relying on it. The driver (LEDs) is handed to
+# the application when listed in `chosen { kumiki,extras }`.
+- compatible: "m5stack,py32-io"
+  kumiki:
+    bus: i2c
+    class: gpio-expander
+    init: |
+      chips::py32_init(RefCellDevice::new(${bus}), ${const:ADDR}, ${const:LEDS}, ${lines}).map_err(InitError::I2c)?
+    type: "kumiki_py32::Py32<SharedI2c>"
+    gpio-pin: "kumiki_py32::Py32Pin::new(RefCellDevice::new(${bus}), ${const:ADDR}, ${line})"
+    gpio-pin-type: "kumiki_py32::Py32Pin<SharedI2c>"
+  properties:
+    reg: { type: int, required: true }
+    gpio-controller: { type: boolean, required: true }
+    "#gpio-cells": { type: int, required: true }
+    kumiki,leds: { type: int, description: "number of addressable RGB LEDs on its LED line (0: none)" }
+
 # ---- displays ------------------------------------------------------------------
 - compatible: "ilitek,ili9881c"
   kumiki:
@@ -329,3 +347,27 @@
     variant: Rx8130
     type: "kumiki_rtc::Rx8130<SharedI2c>"
   properties: *rtc
+
+# ---- add-on boards (doc/14 §4) ---------------------------------------------------
+# TI INA226 current / power monitor. `None` if it does not answer.
+- compatible: "ti,ina226"
+  kumiki:
+    bus: i2c
+    init: |
+      {
+          let mut m = kumiki_ina226::Ina226::new(RefCellDevice::new(${bus}), ${const:ADDR}, ${const:SHUNT_RESISTOR}.unwrap_or(1000));
+          m.init().ok().map(|_| m)
+      }
+    type: "Option<kumiki_ina226::Ina226<SharedI2c>>"
+  properties:
+    reg: { type: int, required: true }
+    shunt-resistor: { type: int, description: "shunt in micro-ohms (Linux binding; default 1000)" }
+
+# A serial servo on a UART bus (the application owns the protocol). The
+# generator emits its id (`reg`) and properties as constants.
+- compatible: "feetech,scs0009"
+  kumiki: { bus: uart, init: "()" }
+  properties:
+    reg: { type: int, required: true, description: "servo id" }
+    kumiki,zero: { type: int, description: "raw position of the neutral pose" }
+    kumiki,range: { type: array, description: "lowest and highest raw position" }

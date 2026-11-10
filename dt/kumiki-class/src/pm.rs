@@ -97,6 +97,35 @@ pub trait RegulatorSwitch {
     fn set_enabled(&mut self, on: bool) -> Result<(), Self::Error>;
 }
 
+/// A supply switched by one GPIO / expander line (Linux `regulator-fixed`
+/// with a `gpios` enable): drives the line active to switch on, then waits
+/// `startup_us` for the output to settle.
+pub struct GpioSwitch<P, D> {
+    pin: P,
+    active_low: bool,
+    startup_us: u32,
+    delay: D,
+}
+
+impl<P: embedded_hal::digital::OutputPin, D: embedded_hal::delay::DelayNs> GpioSwitch<P, D> {
+    /// Takes `pin` and drives it inactive (supply off).
+    pub fn new(mut pin: P, active_low: bool, startup_us: u32, delay: D) -> Self {
+        let _ = if active_low { pin.set_high() } else { pin.set_low() };
+        Self { pin, active_low, startup_us, delay }
+    }
+}
+
+impl<P: embedded_hal::digital::OutputPin, D: embedded_hal::delay::DelayNs> RegulatorSwitch for GpioSwitch<P, D> {
+    type Error = P::Error;
+    fn set_enabled(&mut self, on: bool) -> Result<(), P::Error> {
+        if on != self.active_low { self.pin.set_high() } else { self.pin.set_low() }?;
+        if on {
+            self.delay.delay_us(self.startup_us);
+        }
+        Ok(())
+    }
+}
+
 /// The use count of one regulator, shared by its [`Rail`] handles (put it in
 /// a `static`; the generator emits one per DT regulator node).
 ///
@@ -195,6 +224,38 @@ mod tests {
             self.0.borrow_mut().push(on);
             Ok(())
         }
+    }
+
+    /// A pin and a delay recording what happens to them.
+    #[derive(Clone, Default)]
+    struct Trace(Rc<RefCell<Vec<&'static str>>>);
+    impl embedded_hal::digital::ErrorType for Trace {
+        type Error = core::convert::Infallible;
+    }
+    impl embedded_hal::digital::OutputPin for Trace {
+        fn set_low(&mut self) -> Result<(), Self::Error> {
+            self.0.borrow_mut().push("low");
+            Ok(())
+        }
+        fn set_high(&mut self) -> Result<(), Self::Error> {
+            self.0.borrow_mut().push("high");
+            Ok(())
+        }
+    }
+    impl embedded_hal::delay::DelayNs for Trace {
+        fn delay_ns(&mut self, _ns: u32) {
+            self.0.borrow_mut().push("wait");
+        }
+    }
+
+    #[test]
+    fn gpio_switch_starts_off_and_waits_after_switching_on() {
+        let t = Trace::default();
+        let mut s = GpioSwitch::new(t.clone(), true, 200_000, t.clone());
+        s.set_enabled(true).unwrap();
+        s.set_enabled(false).unwrap();
+        // Active low: off = high; on = low, then the startup delay.
+        assert_eq!(*t.0.borrow(), ["high", "low", "wait", "high"]);
     }
 
     #[test]

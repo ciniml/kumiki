@@ -168,12 +168,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "kumiki-ina226"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+]
+
+[[package]]
 name = "kumiki-mpu6886"
 version = "0.1.0"
 dependencies = [
  "embedded-hal",
  "embedded-hal-async",
  "kumiki-class",
+]
+
+[[package]]
+name = "kumiki-py32"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
 ]
 
 [[package]]

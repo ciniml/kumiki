@@ -114,6 +114,9 @@ pub struct KumikiMeta {
     /// `OutputPin` expression for one line of this gpio-controller (`${line}`).
     #[serde(default, rename = "gpio-pin")]
     pub gpio_pin: Option<String>,
+    /// Rust type of the `gpio-pin` expression (for `${outpin-type:…}`).
+    #[serde(default, rename = "gpio-pin-type")]
+    pub gpio_pin_type: Option<String>,
     /// Driver model type substituted for `${model}`.
     #[serde(default)]
     pub model: Option<String>,
@@ -583,6 +586,10 @@ pub fn rails(board: &Board) -> Vec<(String, bool)> {
                 let label = r.labels.first().cloned().unwrap_or_else(|| r.base_name().to_lowercase());
                 v.push((label, r.has("regulator-always-on")));
             }
+        }
+        // A GPIO-switched supply (Linux `regulator-fixed`).
+        if is_present(n) && n.compatible().contains(&"regulator-fixed") {
+            v.push((label_of(tree, path), n.has("regulator-always-on")));
         }
     });
     v

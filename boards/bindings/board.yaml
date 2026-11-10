@@ -73,6 +73,27 @@
     io-expander: { type: phandle, required: true }
     touch-int-gpios: { type: gpios, required: true }
 
+# Linux `regulator-fixed` switched by one line: a `kumiki_class::Rail` (use
+# count in the board's `rails` module). Off after bring-up unless
+# `regulator-boot-on` / `regulator-always-on`.
+- compatible: "regulator-fixed"
+  kumiki:
+    init: |
+      {
+          let mut r = kumiki_class::Rail::new(&${rail}, kumiki_class::GpioSwitch::new(${outpin:gpios}, bind::active_low(${const:GPIOS}), ${const:STARTUP_DELAY_US}.unwrap_or(0), Delay::new()));
+          if ${const:REGULATOR_BOOT_ON} || ${const:REGULATOR_ALWAYS_ON} {
+              r.enable().map_err(|_| InitError::Config)?;
+          }
+          r
+      }
+    type: "kumiki_class::Rail<kumiki_class::GpioSwitch<${outpin-type:gpios}, Delay>>"
+  properties:
+    regulator-name: { type: string }
+    gpios: { type: gpios, required: true }
+    startup-delay-us: { type: int, description: "time the output needs to settle after switching on" }
+    regulator-boot-on: { type: boolean }
+    regulator-always-on: { type: boolean }
+
 # Linux `gpio-poweroff`: driving the line active switches the board off.
 # Bring-up never touches the line (kumiki-dtgen also refuses gpio-hogs on it
 # and leaves it out of expander line set-up); only a power-off does (doc/13).
@@ -98,6 +119,8 @@
   properties:
     device: { type: phandle, required: true }
     register: { type: int, required: true }
+    kumiki,reject: { type: array, description: "register values that mean absent (e.g. 0x00 0xff of a device still booting)" }
+    kumiki,boot-time-ms: { type: int, description: "the device answers within this time after power-on: keep probing until then" }
 
 - compatible: "kumiki,probe-dcs-id-3wire"
   properties:

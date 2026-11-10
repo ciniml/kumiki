@@ -23,6 +23,25 @@
     kumiki,io-pins: { type: array, description: "GPIOs the HAL exposes (unused ones are handed to the application)" }
     kumiki,spi-memory-pins: { type: array, description: "GPIOs the SPI flash / quad PSRAM may own: never handed to the application" }
 
+- compatible: "espressif,esp32-uart"
+  kumiki:
+    controller: uart
+    # Blocking esp-hal UART, 8N1 at `current-speed` (`into_async()` for async use).
+    init: |
+      esp_hal::uart::Uart::new(${instance}, esp_hal::uart::Config::default().with_baudrate(${const:CURRENT_SPEED}.unwrap_or(115_200)))
+          .map_err(|_| InitError::Config)?
+          .with_tx(${pin:tx-gpios})
+          .with_rx(${pin:rx-gpios})
+    type: "esp_hal::uart::Uart<'static, esp_hal::Blocking>"
+  properties:
+    reg: { type: array }
+    "#address-cells": { type: int }
+    "#size-cells": { type: int }
+    kumiki,instance: { type: string, required: true }
+    current-speed: { type: int, description: "baud rate (default 115200)" }
+    tx-gpios: { type: gpios }
+    rx-gpios: { type: gpios }
+
 - compatible: "espressif,esp32-i2c"
   kumiki:
     controller: i2c

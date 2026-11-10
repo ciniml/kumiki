@@ -105,7 +105,9 @@ dependencies = [
  "kumiki-es8388",
  "kumiki-gfx",
  "kumiki-gfx-panels",
+ "kumiki-ina226",
  "kumiki-p4v1-hal",
+ "kumiki-py32",
  "kumiki-rtc",
  "static_cell",
 ]
@@ -151,12 +153,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "kumiki-ina226"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
+]
+
+[[package]]
 name = "kumiki-p4v1-hal"
 version = "0.1.0"
 dependencies = [
  "embedded-graphics-core",
  "embedded-hal",
  "kumiki-gfx",
+]
+
+[[package]]
+name = "kumiki-py32"
+version = "0.1.0"
+dependencies = [
+ "embedded-hal",
 ]
 
 [[package]]

@@ -34,6 +34,8 @@ pub struct SocInfo {
     pub spi: Vec<String>,
     /// I²S instances (`I2S0`, …).
     pub i2s: Vec<String>,
+    /// UART instances (`UART0`, …).
+    pub uart: Vec<String>,
 }
 
 /// Arguments of every `<name>!((…))` invocation in `text` (the part inside
@@ -124,6 +126,13 @@ pub fn parse_metadata(text: &str) -> Result<SocInfo, Error> {
             info.i2s.push(f[0].to_string());
         }
     }
+    for args in invocations(text, "_for_each_inner_uart") {
+        // Individual form: `0, UART0, Uart0, U0RXD, …`
+        let f: Vec<&str> = args.split(',').map(str::trim).collect();
+        if f.len() >= 2 && f[0].parse::<u32>().is_ok() && f[1].starts_with("UART") && !info.uart.contains(&f[1].to_string()) {
+            info.uart.push(f[1].to_string());
+        }
+    }
     info.gpios.sort_unstable();
     info.octal_psram_pins.sort_unstable();
     info.lp_gpios.sort_unstable();
@@ -195,8 +204,13 @@ pub fn generate(chip: &str, info: &SocInfo, pac: &str, sources: &[String]) -> Re
     for s in &info.i2s {
         nodes.push((s.to_lowercase(), s, addr(s)?, "i2s"));
     }
+    for s in &info.uart {
+        nodes.push((s.to_lowercase(), s, addr(s)?, "uart"));
+    }
     for (label, inst, a, kind) in &nodes {
-        writeln!(o, "\n\t\t{label}: {kind}@{a:x} {{\n\t\t\tcompatible = \"espressif,esp32-{kind}\";\n\t\t\treg = <{a:#x} 0x1000>;").unwrap();
+        // DT names UART nodes `serial@…`.
+        let name = if *kind == "uart" { "serial" } else { kind };
+        writeln!(o, "\n\t\t{label}: {name}@{a:x} {{\n\t\t\tcompatible = \"espressif,esp32-{kind}\";\n\t\t\treg = <{a:#x} 0x1000>;").unwrap();
         writeln!(o, "\t\t\t#address-cells = <1>;\n\t\t\t#size-cells = <0>;\n\t\t\tkumiki,instance = \"{inst}\";\n\t\t\tstatus = \"disabled\";\n\t\t}};").unwrap();
     }
     writeln!(o, "\t}};\n}};").unwrap();
@@ -223,11 +237,13 @@ mod tests {
         _for_each_inner_i2s!((I2S1)); _for_each_inner_i2s!((I2S1, I2s1, I2S1_MCLK, I2S1O_BCK, [I2S1O_SD], true));
         _for_each_inner_lp_function!((LP_GPIO1, GPIO1, _0)); _for_each_inner_lp_function!((SAR_I2C_SDA_0, GPIO1, _3));
         _for_each_inner_lp_function!((LP_GPIO0, GPIO0, _0));
+        _for_each_inner_uart!((1, UART1, Uart1, U1RXD, U1TXD)); _for_each_inner_uart!((all(1, UART1, Uart1, U1RXD, U1TXD)));
     "#;
     const PAC: &str = "pub type GPIO = crate::Periph<gpio::RegisterBlock, 0x6000_4000>;\n\
         pub type I2C0 = crate::Periph<i2c0::RegisterBlock, 0x6001_3000>;\n\
         pub type SPI2 = crate::Periph<spi2::RegisterBlock, 0x6002_4000>;\n\
-        pub type I2S1 = crate::Periph<i2s1::RegisterBlock, 0x6002_d000>;\n";
+        pub type I2S1 = crate::Periph<i2s1::RegisterBlock, 0x6002_d000>;\n\
+        pub type UART1 = crate::Periph<uart0::RegisterBlock, 0x6001_0000>;\n";
 
     #[test]
     fn parses_metadata_and_pac() {
@@ -239,6 +255,7 @@ mod tests {
         assert_eq!(info.i2s, vec!["I2S1"]);
         assert_eq!(info.lp_gpios, vec![0, 1]);
         assert_eq!(info.spi_memory_pins, vec![0]);
+        assert_eq!(info.uart, vec!["UART1"]);
         assert_eq!(pac_address(PAC, "I2C0"), Some(0x6001_3000));
         let dtsi = generate("esp32s3", &info, PAC, &[]).unwrap();
         assert!(dtsi.contains("i2c0: i2c@60013000"));
@@ -248,5 +265,6 @@ mod tests {
         assert!(dtsi.contains("kumiki,lp-io-pins = <0 1>;"));
         assert!(dtsi.contains("kumiki,io-pins = <0 1 3>;"));
         assert!(dtsi.contains("kumiki,spi-memory-pins = <0>;"));
+        assert!(dtsi.contains("uart1: serial@60010000 {\n\t\t\tcompatible = \"espressif,esp32-uart\";"));
     }
 }

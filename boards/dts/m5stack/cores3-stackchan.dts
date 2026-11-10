@@ -1,0 +1,82 @@
+/*
+ * M5Stack CoreS3 on the Stack-chan base: PY32 IO expander (servo 5 V
+ * switch, 12 RGB LEDs), INA226 battery monitor, two SCS0009 serial servos.
+ * Detected before the plain CoreS3 by asking the PY32 for its version.
+ * Sources: StackChan-BSP src/M5StackChan.cpp, drivers/PY32IOExpander (MIT,
+ *          M5Stack); stackchan-rs boards/m5stack/src/board/cores3.rs.
+ */
+/dts-v1/;
+
+#include <m5stack/cores3.dtsi>
+
+/ {
+	model = "M5Stack CoreS3 + Stack-chan";
+	compatible = "m5stack,cores3-stackchan", "m5stack,cores3", "espressif,esp32s3";
+
+	chosen {
+		/* Handed to the application as `Extras::M5StackCoreS3StackChan`. */
+		kumiki,extras = <&base_io>, <&servo_power>, <&battery>, <&uart1>;
+	};
+
+	/* Servo bus supply: PY32 line 0 (VM_EN). The servos need ~200 ms after
+	 * it turns on. Off until the application enables the rail. */
+	servo_power: regulator-servo {
+		compatible = "regulator-fixed";
+		regulator-name = "servo-5v";
+		gpios = <&base_io 0 GPIO_ACTIVE_HIGH>;
+		startup-delay-us = <200000>;
+	};
+
+	kumiki,detect {
+		/* The PY32 boots slowly (StackChan-BSP waits up to 1.2 s); a booting
+		 * chip reads 0x00 or 0xFF. */
+		base-io-version {
+			compatible = "kumiki,probe-i2c-ack";
+			device = <&base_io>;
+			register = <0x02>;
+			kumiki,reject = <0x00 0xff>;
+			kumiki,boot-time-ms = <1200>;
+		};
+	};
+};
+
+&i2c0 {
+	base_io: gpio@6f {
+		compatible = "m5stack,py32-io";
+		reg = <0x6f>;
+		gpio-controller;
+		#gpio-cells = <2>;
+		kumiki,leds = <12>;
+		/* LED data line: push-pull output (as StackChan-BSP sets it up). */
+		led-data-hog { gpio-hog; gpios = <13 GPIO_ACTIVE_HIGH>; output-low; line-name = "RGB_DATA"; };
+	};
+
+	/* Battery voltage / current: 10 mOhm shunt. */
+	battery: power-monitor@41 {
+		compatible = "ti,ina226";
+		reg = <0x41>;
+		shunt-resistor = <10000>;
+	};
+};
+
+/* Servo bus on the base connector: TX = GPIO6, RX = GPIO7, 1 Mbit/s 8N1. */
+&uart1 {
+	status = "okay";
+	current-speed = <1000000>;
+	tx-gpios = <&gpio 6 GPIO_ACTIVE_HIGH>;
+	rx-gpios = <&gpio 7 GPIO_ACTIVE_HIGH>;
+
+	yaw: servo@1 {
+		compatible = "feetech,scs0009";
+		reg = <1>;
+		kumiki,zero = <460>;
+		kumiki,range = <0 1000>;
+	};
+
+	pitch: servo@2 {
+		compatible = "feetech,scs0009";
+		reg = <2>;
+		kumiki,zero = <620>;
+		kumiki,range = <0 1000>;
+	};
+};

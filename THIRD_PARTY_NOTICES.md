@@ -46,6 +46,14 @@ Used for: RTC register use and start-up writes (`drivers/kumiki-rtc`, from
 M5Unified 0.2.13 `src/utility/rtc/{PCF8563,RX8130}_Class.cpp`). Same MIT
 license text as M5GFX above, Copyright (c) 2021 M5Stack.
 
+## StackChan-BSP
+
+Used for: the PY32 IO expander register map, line set-up and LED format
+(`drivers/kumiki-py32`, from `src/drivers/PY32IOExpander`), and the Stack-chan
+base facts in `boards/dts/m5stack/cores3-stackchan.dts` (from
+`src/M5StackChan.cpp`). Same MIT license text as M5GFX above, Copyright (c)
+2026 M5Stack Technology CO LTD.
+
 ## LovyanGFX
 
 The M5GFX graphics core (`src/lgfx/v1`) is LovyanGFX, licensed under the

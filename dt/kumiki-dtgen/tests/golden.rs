@@ -25,7 +25,12 @@ const FAMILIES: &[Family] = &[
     Family {
         name: "esp32s3",
         backend: Backend::Esp32s3,
-        boards: &["boards/dts/m5stack/cores3.dts", "boards/dts/m5stack/atoms3.dts", "boards/dts/m5stack/stopwatch.dts"],
+        boards: &[
+            "boards/dts/m5stack/cores3-stackchan.dts",
+            "boards/dts/m5stack/cores3.dts",
+            "boards/dts/m5stack/atoms3.dts",
+            "boards/dts/m5stack/stopwatch.dts",
+        ],
     },
     Family { name: "p4v1", backend: Backend::P4v1, boards: &["boards/dts/m5stack/tab5.dts"] },
 ];
@@ -107,6 +112,42 @@ fn unused_resources_are_handed_to_the_application() {
     let atoms3 = board_module(&code, "atoms3");
     for want in ["i2c0: Some(p.I2C0)", "i2c1: None", "gpio38: None", "i2c: Some(i2c1)", "i2s1: Some(p.I2S1)"] {
         assert!(atoms3.contains(want), "atoms3: {want}");
+    }
+    // A board uses UART1, so it is in `Free` (an `Option`), not in `Spare`.
+    assert!(code.contains("pub uart1: Option<esp_hal::peripherals::UART1<'static>>,"));
+    assert!(code.contains("pub uart0: esp_hal::peripherals::UART0<'static>,"));
+    assert!(cores3.contains("uart1: Some(p.UART1)") && cores3.contains("extras: super::Extras::None"));
+}
+
+#[test]
+fn stackchan_base_is_an_extra_set_of_the_cores3_variant() {
+    let root = root();
+    let bindings = Bindings::load_dir(&root.join("boards/bindings")).unwrap();
+    let f = &FAMILIES[0];
+    let opt = gen_esp::Options { backend: f.backend, module_path: "$crate::esp32s3::generated".into(), source_root: root.clone() };
+    let code = gen_esp::generate(&boards(&root, f), &bindings, &opt).unwrap();
+    // Detected first; the PY32 is asked until its boot time has passed.
+    assert!(code.find("return Ok(BoardId::M5StackCoreS3Stackchan)").unwrap() < code.find("return Ok(BoardId::M5StackCoreS3)").unwrap());
+    assert!(code.contains("if v.is_some_and(|b| b != 0x00 && b != 0xff) || esp_hal::time::Instant::now().duration_since_epoch().as_millis() >= 1200 {"));
+    let m = board_module(&code, "cores3_stackchan");
+    for want in [
+        // The servo bus takes UART1 and GPIO6/7.
+        "uart1: None",
+        "gpio6: None",
+        "gpio7: None",
+        ".with_tx(pins.uart1_tx)",
+        // The servo supply is a rail switched by PY32 line 0, off after bring-up.
+        "pub static SERVO_POWER: kumiki_class::RailCount = kumiki_class::RailCount::new(false);",
+        "pub servo_power: kumiki_class::Rail<kumiki_class::GpioSwitch<kumiki_py32::Py32Pin<SharedI2c>, Delay>>,",
+        "(0, chips::LineInit::OutputLow)",
+        "pub battery: Option<kumiki_ina226::Ina226<SharedI2c>>,",
+        "pub uart1: esp_hal::uart::Uart<'static, esp_hal::Blocking>,",
+        "extras: super::Extras::M5StackCoreS3Stackchan(Extras { base_io: base_io, servo_power: servo_power, battery: battery, uart1: uart1 })",
+        // Servo ids and poses as constants.
+        "pub const ID: u8 = 1;",
+        "pub const ZERO: Option<u32> = Some(620);",
+    ] {
+        assert!(m.contains(want), "cores3_stackchan: {want}");
     }
 }
 

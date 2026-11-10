@@ -90,5 +90,32 @@
 			kumiki,instance = "I2S1";
 			status = "disabled";
 		};
+
+		uart0: serial@60000000 {
+			compatible = "espressif,esp32-uart";
+			reg = <0x60000000 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			kumiki,instance = "UART0";
+			status = "disabled";
+		};
+
+		uart1: serial@60010000 {
+			compatible = "espressif,esp32-uart";
+			reg = <0x60010000 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			kumiki,instance = "UART1";
+			status = "disabled";
+		};
+
+		uart2: serial@6002e000 {
+			compatible = "espressif,esp32-uart";
+			reg = <0x6002e000 0x1000>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			kumiki,instance = "UART2";
+			status = "disabled";
+		};
 	};
 };

@@ -151,6 +151,35 @@ pub fn aw9523_init<I: I2c>(i2c: &mut I, addr: u8, p0_push_pull: bool, lines: &[(
     write_reg(i2c, addr, 0x03, (out >> 8) as u8)
 }
 
+/// Configure a PY32 IO expander's listed lines (the others keep their
+/// state) and its LED count (`leds`, DT `kumiki,leds`; the LEDs start off).
+pub fn py32_init<I: I2c>(i2c: I, addr: u8, leds: Option<u32>, lines: &[(u8, LineInit)]) -> Result<kumiki_py32::Py32<I>, I::Error> {
+    use kumiki_py32::{Error, LineMode, MAX_LEDS, Py32};
+    // Only I²C errors propagate (an out-of-range line is skipped).
+    fn ok<E>(r: Result<(), Error<E>>) -> Result<(), E> {
+        match r {
+            Err(Error::I2c(e)) => Err(e),
+            _ => Ok(()),
+        }
+    }
+    let mut d = Py32::new(i2c, addr);
+    for &(line, init) in lines {
+        let mode = match init {
+            LineInit::Input => LineMode::Input,
+            LineInit::OutputHigh => LineMode::Output(true),
+            LineInit::OutputLow => LineMode::Output(false),
+        };
+        ok(d.set_line_mode(line, mode))?;
+    }
+    let n = leds.unwrap_or(0).min(MAX_LEDS as u32) as usize;
+    if n > 0 {
+        ok(d.set_led_count(n as u8))?;
+        ok(d.set_leds(0, &[0; MAX_LEDS as usize][..n]))?;
+        ok(d.show_leds())?;
+    }
+    Ok(d)
+}
+
 /// One AW9523B output line as an `embedded_hal::digital::OutputPin`
 /// (e.g. a panel reset line on the expander).
 pub struct Aw9523Pin<I> {

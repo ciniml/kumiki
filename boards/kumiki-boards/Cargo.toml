@@ -13,6 +13,7 @@ chip-esp32s3 = ["dep:esp-hal", "dep:esp32s3", "dep:kumiki-gfx-bus-esp", "dep:kum
 chip-p4v1 = ["dep:kumiki-p4v1-hal"]
 # Optional board pinning (no feature = every board of the chip is a detection candidate).
 board-m5stack-cores3 = []
+board-m5stack-cores3-stackchan = []
 board-m5stack-atoms3 = []
 board-m5stack-stopwatch = []
 board-m5stack-tab5 = []
@@ -25,6 +26,8 @@ kumiki-bmi270 = { path = "../../drivers/kumiki-bmi270" }
 kumiki-rtc = { path = "../../drivers/kumiki-rtc" }
 kumiki-es7210 = { path = "../../drivers/kumiki-es7210" }
 kumiki-es8388 = { path = "../../drivers/kumiki-es8388" }
+kumiki-py32 = { path = "../../drivers/kumiki-py32" }
+kumiki-ina226 = { path = "../../drivers/kumiki-ina226" }
 embedded-graphics-core = "0.4"
 embedded-hal = "1.0"
 embedded-hal-bus = "0.3"

@@ -30,7 +30,7 @@ use kumiki_p4v1_hal::{Peripherals, cache, clock, dsi, i2c::I2c, psram};
 
 pub use any::{AnyError, DisplayError};
 pub use generated::{
-    AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, BoardId, DetectLog,
+    AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, BoardId, DetectLog, Extras,
 };
 
 /// Push-pull output (e.g. a GPIO backlight).
@@ -112,6 +112,8 @@ pub struct Devices {
     pub i2c: Option<&'static core::cell::RefCell<I2cBus>>,
     /// Peripherals the board definition does not use.
     pub spare: Spare,
+    /// Board-specific devices (DT `chosen { kumiki,extras }`).
+    pub extras: Extras,
 }
 
 /// Reset reason of this boot (read by the generated `init` before bring-up;

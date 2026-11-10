@@ -1,0 +1,12 @@
+[package]
+name = "kumiki-ina226"
+description = "TI INA226 current / power monitor driver (embedded-hal 1.0 I2C, no_std, no alloc)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+embedded-hal.workspace = true
