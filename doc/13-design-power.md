@@ -107,7 +107,9 @@ pub trait DevicePm {
 }
 ```
 
-- **既定の実装は与えない**。何もしないデバイスは、バインディングに `pm: none` と書く。dtgen は、それを見て何もしない実装を生成する。暗黙の空実装があると、休止したつもりで電流が流れ続ける（Zephyr が `-ENOTSUP` を返させるのと同じ考え方）。
+- **既定の実装は与えない**。暗黙の空実装があると、休止したつもりで電流が流れ続ける（Zephyr が `-ENOTSUP` を返させるのと同じ考え方）。
+  - 実装では、バインディングに `pm:` 欄を足す案はやめた。`DevicePm` は `Any*` の enum に実装し、生成されたディスパッチのマクロで、全バリアントに同じ名前のメソッドを呼ぶ。休止の手順を持たないデバイスを DT に足すと、コンパイルが通らない。これで、`pm:` 欄と同じ強制が Rust の型検査だけで得られる。
+  - まだ休止できないデバイスは、`AnyError::Unsupported` を返す（§7）。
 - 各クラスの休止の中身
   - `Display`: 画面を消す → パネルを SLPIN → バックライトのレールを手放す。復帰は、この逆順に行う。
   - `Speaker`: アンプを切る → コーデックの電源を落とす（ES8388 の `power_down`）。復帰は `power_up` で行う。今の `Speaker::restart` は、`Suspend` と `Resume` の組で置き換えられる。
@@ -123,7 +125,7 @@ Linux / Zephyr の標準プロパティを、そのまま使う。
 | `*-supply`（既存） | 使うレール | 参照カウントのある `RailHandle` を渡す |
 | `regulator-always-on` | 切らないレール | ハンドルを渡さず、常にオンにする |
 | `power-domains` | まとめて入り切りする単位（エキスパンダの線など） | レールと同じ扱い |
-| `wakeup-source` | 起こす要因になれるデバイス | 起こす要因の一覧。**INT の線が RTC IO / LP IO でなければ、生成時にエラーにする**（ディープスリープからは起こせないため） |
+| `wakeup-source` | 起こす要因になれるデバイス | 起こす要因の一覧（`WAKEUP_SOURCES`）。線が RTC IO / LP IO（SoC の `kumiki,lp-io-pins`）かどうかを `deep_sleep` として持つ。それ以外のピンでもライトスリープからは起こせるので、エラーにはしない。**IO エキスパンダの線は、生成時にエラーにする**（チップを直接起こせないため） |
 | `system-power-controller`（PMIC ノード） | 電源オフを担うノード | `power_off()` の実装 |
 | `gpio-poweroff`（`gpios`、`active-delay-ms` など） | GPIO で電源を切る | 同上。Tab5 は、エキスパンダ #2 の bit4 をこのノードにだけ渡す |
 | `kumiki,protected-lines`（既存の案） | 誰にも渡さない線 | `gpio-poweroff` が参照する線だけは、そのノードにだけ渡す |
@@ -173,6 +175,26 @@ ESP-IDF の自動ライトスリープに相当する。次の時刻（`Clock` �
 | 次 | `power_off()`、`deep_sleep()`、RTC のアラームで起動 | 3 機種で実際に電流を測りながら行う |
 | 次 | `SleepGuard` と、手動のライトスリープ | I2S と表示の DMA がガードを持つ |
 | 後 | 自動のライトスリープ、DFS、P4 の周辺回路の電源オフとレジスタの退避 | 必要になったときに行う |
+
+## 7. 実装の状況（2026-11-10）
+
+§5 の「今」の分を入れた。
+
+| 項目 | 実装 |
+|---|---|
+| 共通の型（`kumiki-class::pm`） | `PmAction`、`DevicePm`（既定の実装なし）、`BootInfo` / `ResetReason` / `WakeCause`、`RegulatorSwitch` / `RailCount` / `Rail`（1 つのハンドルは 1 回だけ数える。最後の 1 つが手放すと切る。`always_on` は切らない）。ホストのテストあり |
+| 起動の理由 | `Devices::boot`。生成された `init` が、立ち上げの前に読む。S3 は esp-hal の `reset_reason` / `wakeup_cause`、P4 は `kumiki_p4v1_hal::reset::reason_code()`（LP_CLKRST_RESET_CAUSE。tab5-os で確認済みのレジスタ）。ROM の番号から `ResetReason` への変換は、2 つのファミリーで共通にした。P4 のディープスリープの起床要因は、まだ読んでいない（`WakeCause::Unknown`） |
+| `DevicePm` | S3: 表示（DISPOFF → SLPIN / SLPOUT → 120 ms → DISPON）、IMU（BMI270 の suspend と advanced power save、MPU6886 の SLEEP）、AW88298（SYSCTRL 0x4000 / 0x4040）、ES7210（MIC12_PDN）。P4: IMU、ES8388（アンプを切る → `power_down` / `power_up` → アンプを入れる。アンプの線を構造体に持たせた）、ES7210 |
+| まだ休止できないもの | タッチ（どのコントローラも、起こすのにリセット線か INT 線が要り、ドライバがそれを持っていない）、P4 の表示（映像を流しながら DCS コマンドを送ることを、実機で確かめていない）。どちらも `AnyError::Unsupported` を返す。バックライト・電源・RTC には `DevicePm` を付けない（バックライトは輝度 0 で切る。PMIC と電池で動く RTC は切らない） |
+| 生成器 | `SUSPEND_ORDER`、`WAKEUP_SOURCES`、`POWER_OFF`、レールごとの `static RailCount`（`rails` モジュール）を出す。検査として、起こす要因の線がエキスパンダならエラー、電源オフの手段が 2 つ以上あればエラー、電源オフの線に `gpio-hog` があればエラーにした。エキスパンダの線の初期設定からも、電源オフの線は外す。テストは `dt/kumiki-dtgen/tests/power.rs` |
+| SoC の記述 | ディープスリープでも電源が入っているピンを `kumiki,lp-io-pins` とした（`*-gpios` という名前にすると、dtc が GPIO の指定として読んでしまうため）。S3 は esp-metadata の `LP_GPIOn` から生成して 0〜21。P4 は手書きで 0〜15（soc_caps.h）である |
+| DT | CoreS3 の AXP2101 と StopWatch の M5PM1 に `system-power-controller`。AtomS3 のボタンに `wakeup-source`（GPIO41 は RTC IO ではないので、ライトスリープからだけ起こせる）。Tab5 に `gpio-poweroff`（エキスパンダ #2 の線 4、50 ms ごとに 5 パルス。M5Unified と同じ）。立ち上げでは `()` になり、エキスパンダ #2 には何も書かない |
+| デモ | 起動時に `BootInfo` を表示する。音の自動確認に通ったら、スピーカーを休止して 1 kHz が聞こえないこと、復帰させて聞こえることを確かめる（`speaker pm: … ok`）。IMU は、休止と復帰を 1 回ずつ行う |
+
+計画から変えたところと、次に回したもの:
+- バインディングの `pm:` 欄はやめ、Rust の型検査で強制した（§4.2）。
+- `wakeup-source` が RTC IO 以外のピンでも、エラーにはしない（§4.3）。
+- `Rail` は、型と、生成した `static` までを入れた。デバイスにハンドルを渡すところ（CoreS3 の LCD の `power-supply = <&aldo3>` など）と、AXP2101 の LDO を切る `RegulatorSwitch` は、電源オフと一緒に「次」で行う。レールを実際に切ると、ほかのデバイスの電源も落ちうるので、電流を測れるときに行う。
 
 ## 6. 未決事項
 

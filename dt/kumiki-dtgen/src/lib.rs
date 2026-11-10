@@ -161,7 +161,14 @@ const COMMON_PROPS: &[&str] = &[
     "kumiki,depends-on",
     "kumiki,optional",
     "kumiki,probe-group",
+    // Power management (Linux / Zephyr standard; doc/13).
+    "wakeup-source",
+    "system-power-controller",
 ];
+
+/// Properties that carry the interrupt line of a `wakeup-source` device, in
+/// order of preference (`gpios`: a gpio-keys entry).
+const WAKE_GPIO_PROPS: &[&str] = &["irq-gpios", "interrupt-gpios", "gpios"];
 
 impl Bindings {
     /// Load every `*.yaml` file in `dir` (each a list of bindings).
@@ -392,7 +399,193 @@ pub fn validate(board: &Board, bindings: &Bindings) -> Vec<String> {
             }
         }
     });
+    if let Err(e) = wakeup_sources(board) {
+        errs.push(e.0);
+    }
+    if let Err(e) = power_off(board) {
+        errs.push(e.0);
+    }
+    // Bring-up must never drive a power-off line: no gpio-hog on it.
+    for (controller, line) in poweroff_lines(tree) {
+        let Some(cpath) = tree.resolve(&controller) else { continue };
+        for c in tree.node(&cpath).map(|n| n.children.as_slice()).unwrap_or_default() {
+            if c.has("gpio-hog") && c.prop("gpios").and_then(|p| p.u32()) == Some(line) {
+                errs.push(format!("{cpath}/{}: line {line} belongs to gpio-poweroff", c.name));
+            }
+        }
+    }
     errs
+}
+
+// ---- power management (doc/13) ---------------------------------------------------
+
+/// A device that can wake the chip (DT `wakeup-source`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WakeupSource {
+    /// Node path.
+    pub path: String,
+    /// Chip GPIO of its interrupt / key line.
+    pub pin: u32,
+    /// Active low.
+    pub active_low: bool,
+    /// The pin is an RTC / LP IO (SoC `kumiki,lp-io-pins`), so it can wake the
+    /// chip from deep sleep too, not only from light sleep.
+    pub deep_sleep: bool,
+}
+
+/// The pins of the chip that stay powered in deep sleep (`kumiki,lp-io-pins`
+/// of the chip GPIO controller; not `*-gpios`, which would be specifiers).
+pub fn lp_gpios(tree: &Tree) -> Vec<u32> {
+    let mut v = Vec::new();
+    tree.root.walk("/", &mut |_, n| {
+        if n.compatible().iter().any(|c| c.ends_with("-gpio"))
+            && let Some(p) = n.prop("kumiki,lp-io-pins")
+        {
+            v = p.u32s();
+        }
+    });
+    v
+}
+
+/// Every `wakeup-source` node (devices and gpio-keys entries) with its line.
+/// The line must be a chip GPIO: an IO-expander line cannot wake the chip
+/// (wake on the expander's own interrupt output instead).
+pub fn wakeup_sources(board: &Board) -> Result<Vec<WakeupSource>, Error> {
+    let tree = &board.tree;
+    let lp = lp_gpios(tree);
+    let mut out = Vec::new();
+    let mut err = None;
+    tree.root.walk("/", &mut |path, n| {
+        if err.is_some() || !n.has("wakeup-source") {
+            return;
+        }
+        // A gpio-keys entry is present when its parent is.
+        let parent_present = Tree::parent_path(path).and_then(|p| tree.node(&p).map(is_present)).unwrap_or(true);
+        if !(if n.compatible().is_empty() { parent_present } else { is_present(n) }) {
+            return;
+        }
+        let Some(p) = WAKE_GPIO_PROPS.iter().find_map(|name| n.prop(name)) else {
+            err = Some(Error(format!("{path}: wakeup-source needs one of {WAKE_GPIO_PROPS:?}")));
+            return;
+        };
+        match gpios(tree, p).map(|l| l.into_iter().next()) {
+            Ok(Some(Gpio::Chip { pin, flags })) => out.push(WakeupSource {
+                path: path.to_string(),
+                pin,
+                active_low: flags & 1 != 0,
+                deep_sleep: lp.contains(&pin),
+            }),
+            Ok(Some(Gpio::Expander { controller, pin, .. })) => {
+                err = Some(Error(format!(
+                    "{path}: wakeup-source on {}: line {pin} of {controller} cannot wake the chip",
+                    p.name
+                )))
+            }
+            Ok(None) => err = Some(Error(format!("{path}: {} is empty", p.name))),
+            Err(e) => err = Some(Error(format!("{path}: {e}"))),
+        }
+    });
+    match err {
+        Some(e) => Err(e),
+        None => Ok(out),
+    }
+}
+
+/// How the board switches itself off.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PowerOff {
+    /// The PMIC node marked `system-power-controller` (its driver knows how).
+    Pmic {
+        /// Node path.
+        path: String,
+    },
+    /// A `gpio-poweroff` node: drive the line active (`pulses` times,
+    /// `active_ms` / `inactive_ms` apart).
+    Gpio {
+        /// Node path.
+        path: String,
+        /// The line (often an IO-expander line).
+        gpio: Gpio,
+        /// Active time in ms (`active-delay-ms`, default 100 like Linux).
+        active_ms: u32,
+        /// Inactive time in ms between pulses (`inactive-delay-ms`, default 100).
+        inactive_ms: u32,
+        /// Number of pulses (`kumiki,pulses`, default 1).
+        pulses: u32,
+    },
+}
+
+/// The board's power-off provider, if any. At most one node may provide it.
+pub fn power_off(board: &Board) -> Result<Option<PowerOff>, Error> {
+    let tree = &board.tree;
+    let mut found: Vec<PowerOff> = Vec::new();
+    let mut err = None;
+    tree.root.walk("/", &mut |path, n| {
+        if !is_present(n) || path == "/" {
+            return;
+        }
+        if n.has("system-power-controller") {
+            found.push(PowerOff::Pmic { path: path.to_string() });
+        }
+        if n.compatible().contains(&"gpio-poweroff") {
+            let ms = |name: &str| n.prop(name).and_then(|p| p.u32());
+            match n.prop("gpios").map(|p| gpios(tree, p)) {
+                Some(Ok(l)) if l.len() == 1 => found.push(PowerOff::Gpio {
+                    path: path.to_string(),
+                    gpio: l[0].clone(),
+                    active_ms: ms("active-delay-ms").unwrap_or(100),
+                    inactive_ms: ms("inactive-delay-ms").unwrap_or(100),
+                    pulses: ms("kumiki,pulses").unwrap_or(1).max(1),
+                }),
+                Some(Err(e)) => err = Some(Error(format!("{path}: {e}"))),
+                _ => err = Some(Error(format!("{path}: gpio-poweroff needs exactly one gpios entry"))),
+            }
+        }
+    });
+    if let Some(e) = err {
+        return Err(e);
+    }
+    if found.len() > 1 {
+        return Err(Error(format!("{}: more than one power-off provider: {found:?}", board.source.display())));
+    }
+    Ok(found.pop())
+}
+
+/// Lines of gpio-controller nodes that a `gpio-poweroff` node owns: nothing
+/// may drive them at bring-up (driving one may cut the board's power).
+pub fn poweroff_lines(tree: &Tree) -> Vec<(String, u32)> {
+    let mut v = Vec::new();
+    tree.root.walk("/", &mut |_, n| {
+        if is_present(n)
+            && n.compatible().contains(&"gpio-poweroff")
+            && let Some(p) = n.prop("gpios")
+        {
+            for g in gpios(tree, p).unwrap_or_default() {
+                if let Gpio::Expander { controller, pin, .. } = g {
+                    v.push((controller, pin));
+                }
+            }
+        }
+    });
+    v
+}
+
+/// Regulator nodes (children of a `regulators` node) of present devices:
+/// (label, `regulator-always-on`).
+pub fn rails(board: &Board) -> Vec<(String, bool)> {
+    let tree = &board.tree;
+    let mut v = Vec::new();
+    tree.root.walk("/", &mut |path, n| {
+        if n.name == "regulators"
+            && Tree::parent_path(path).and_then(|p| tree.node(&p).map(is_present)).unwrap_or(false)
+        {
+            for r in &n.children {
+                let label = r.labels.first().cloned().unwrap_or_else(|| r.base_name().to_lowercase());
+                v.push((label, r.has("regulator-always-on")));
+            }
+        }
+    });
+    v
 }
 
 /// `ngpios` of the chip GPIO controller.

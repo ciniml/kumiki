@@ -11,6 +11,8 @@
 #![no_std]
 #![warn(missing_docs)]
 
+mod espressif;
+
 #[cfg(feature = "chip-esp32s3")]
 pub mod esp32s3;
 #[cfg(feature = "chip-esp32s3")]

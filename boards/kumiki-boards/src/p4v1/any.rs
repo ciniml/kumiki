@@ -10,7 +10,7 @@ use embedded_graphics_core::{
     primitives::Rectangle,
     Pixel,
 };
-use kumiki_class::{Backlight, DateTime, Imu, Microphone, Power, Rtc, Speaker, Touch, TouchPoint, Vec3};
+use kumiki_class::{Backlight, DateTime, DevicePm, Imu, Microphone, PmAction, Power, Rtc, Speaker, Touch, TouchPoint, Vec3};
 use kumiki_gfx::{FastDraw, PixelFormat, Rgb565Le};
 use kumiki_p4v1_hal::i2c;
 
@@ -26,6 +26,8 @@ pub enum AnyError {
     I2c(i2c::Error),
     /// The device reported an unexpected state.
     Device,
+    /// Not supported by this device (yet), e.g. suspending a touch panel.
+    Unsupported,
 }
 
 impl From<i2c::Error> for AnyError {
@@ -191,5 +193,54 @@ impl Power for AnyPower {
     }
     fn vbus_present(&mut self) -> Result<Option<bool>, AnyError> {
         any_power!(self, p => p.vbus_present().map_err(AnyError::from))
+    }
+}
+
+// ---- power management (doc/13) ---------------------------------------------------
+//
+// Backlight, power and RTC have no `DevicePm` (as in the ESP32-S3 family).
+
+impl DevicePm for AnyDisplay {
+    type Error = AnyError;
+    /// Not supported yet: the DSI panel would need DCS commands sent while
+    /// the video stream runs (or the stream stopped and restarted), which
+    /// is not verified on hardware. Switch the backlight off meanwhile.
+    fn pm(&mut self, _action: PmAction) -> Result<(), AnyError> {
+        Err(AnyError::Unsupported)
+    }
+}
+
+impl DevicePm for AnyTouch {
+    type Error = AnyError;
+    /// Not supported yet (the GT911 wakes through its INT line, which the
+    /// driver does not own).
+    fn pm(&mut self, _action: PmAction) -> Result<(), AnyError> {
+        Err(AnyError::Unsupported)
+    }
+}
+
+impl DevicePm for AnyImu {
+    type Error = AnyError;
+    /// The chip's suspend mode (configuration kept).
+    fn pm(&mut self, action: PmAction) -> Result<(), AnyError> {
+        any_imu!(self, m => match action {
+            PmAction::Suspend => m.suspend(),
+            PmAction::Resume => m.resume(&mut kumiki_p4v1_hal::time::Delay),
+        }
+        .map_err(AnyError::from))
+    }
+}
+
+impl DevicePm for AnySpeaker {
+    type Error = AnyError;
+    fn pm(&mut self, action: PmAction) -> Result<(), AnyError> {
+        any_speaker!(self, s => s.pm(action).map_err(AnyError::from))
+    }
+}
+
+impl DevicePm for AnyMicrophone {
+    type Error = AnyError;
+    fn pm(&mut self, action: PmAction) -> Result<(), AnyError> {
+        any_microphone!(self, m => m.pm(action).map_err(AnyError::from))
     }
 }

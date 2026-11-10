@@ -286,11 +286,13 @@
       # DAC on the shared, running I2S controller; then the amplifier on.
       p4v1: |
         {
-            let mut amp = ${outpin:amp-enable-gpios};
-            audio::Es8388::new(RefCellDevice::new(${bus}), ${const:ADDR}, ${var:i2s}, &mut amp).ok().map(AnySpeaker::${variant})
+            let amp = ${outpin:amp-enable-gpios};
+            audio::Es8388::new(RefCellDevice::new(${bus}), ${const:ADDR}, ${var:i2s}, amp).ok().map(AnySpeaker::${variant})
         }
     variant: Es8388
-    type: "audio::Es8388<SharedI2c>"
+    # The amplifier line's type: an IO-expander line on the Tab5 (the only
+    # ES8388 board so far; another wiring needs its own type here).
+    type: "audio::Es8388<SharedI2c, chips::Pi4ioePin<SharedI2c>>"
   properties:
     reg: { type: int, required: true }
     i2s: { type: phandle, required: true }

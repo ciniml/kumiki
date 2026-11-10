@@ -131,7 +131,7 @@ const PRELUDE: &str = r#"mod prelude {
     pub use static_cell::StaticCell;
     pub use super::super::{
         audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs,
-        Devices, I2cBus, InitError,
+        boot_info, Devices, I2cBus, InitError,
         Spare,
     };
 }
@@ -156,7 +156,7 @@ const PRELUDE_P4V1: &str = r#"mod prelude {
     pub use static_cell::StaticCell;
     pub use super::super::{
         audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs,
-        Devices, I2cBus, InitError, Spare,
+        boot_info, Devices, I2cBus, InitError, Spare,
     };
 }
 "#;
@@ -338,9 +338,10 @@ impl Ctx<'_> {
             },
             "lines" => {
                 let mut lines: std::collections::BTreeMap<u32, &str> = std::collections::BTreeMap::new();
-                // Lines other devices reference: outputs at their inactive level.
+                // Lines other devices reference: outputs at their inactive level
+                // (except a power-off line, which bring-up never touches).
                 tree.root.walk("/", &mut |_, n| {
-                    if !is_present(n) {
+                    if !is_present(n) || n.compatible().contains(&"gpio-poweroff") {
                         return;
                     }
                     for p in n.props.iter().filter(|p| p.name.ends_with("-gpios") || p.name == "gpios") {
@@ -456,6 +457,7 @@ fn emit_init(out: &mut String, board: &Board, bindings: &Bindings, backend: Back
     writeln!(out, "        let mut pins = take_pins_{}!(p);", board.module).unwrap();
     writeln!(out, "        let spare = take_spare!(p);").unwrap();
     writeln!(out, "        let mut delay = {};", backend.delay_new()).unwrap();
+    writeln!(out, "        // Read before anything else runs (doc/13 §4.4).\n        let boot = boot_info();").unwrap();
     let mut groups_done: Vec<String> = Vec::new();
     for l in &order {
         let path = path_of(l);
@@ -526,6 +528,7 @@ fn emit_init(out: &mut String, board: &Board, bindings: &Bindings, backend: Back
     let buttons = class_node("buttons").map(|p| var_of(&p)).ok_or_else(|| Error(format!("{}: no buttons node", board.source.display())))?;
     writeln!(out, "        Ok(Devices {{").unwrap();
     writeln!(out, "            board: super::BoardId::{},", variant_of(board.model())).unwrap();
+    writeln!(out, "            boot,").unwrap();
     writeln!(out, "            display: {},", var_of(&display)).unwrap();
     writeln!(out, "            backlight: {backlight},\n            touch: {touch},\n            imu: {imu},\n            power: {power},\n            rtc: {rtc},\n            speaker: {speaker},\n            microphone: {microphone},").unwrap();
     writeln!(out, "            buttons: {buttons},\n            spare,\n        }})\n    }}").unwrap();
@@ -551,6 +554,15 @@ fn feature_of(board: &Board) -> String {
 fn label(tree: &Tree, path: &str) -> String {
     let n = tree.node(path).unwrap();
     n.labels.first().cloned().unwrap_or_else(|| ident_lower(n.base_name()))
+}
+
+/// Label of a wake-up node; a gpio-keys entry is `<keys label>.<entry>`.
+fn wake_label(tree: &Tree, path: &str) -> String {
+    let n = tree.node(path).unwrap();
+    match (n.compatible().is_empty(), Tree::parent_path(path)) {
+        (true, Some(parent)) => format!("{}.{}", label(tree, &parent), n.base_name()),
+        _ => label(tree, path),
+    }
 }
 
 fn gpio_expr(g: &Gpio) -> String {
@@ -923,6 +935,28 @@ impl DetectLog {
     }
 }
 
+/// A device that can wake the chip (DT `wakeup-source`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WakeupSource {
+    /// Node label.
+    pub node: &'static str,
+    /// Chip GPIO of its interrupt / key line.
+    pub pin: u8,
+    pub active_low: bool,
+    /// An RTC / LP IO: wakes from deep sleep too, not only light sleep.
+    pub deep_sleep: bool,
+}
+
+/// How the board switches itself off (DT `system-power-controller` /
+/// `gpio-poweroff`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PowerOff {
+    /// The PMIC node's driver.
+    Pmic { node: &'static str },
+    /// Drive `gpio` active `pulses` times (`active_ms` on, `inactive_ms` off).
+    Gpio { node: &'static str, gpio: Gpio, active_ms: u32, inactive_ms: u32, pulses: u32 },
+}
+
 "#,
     );
     out.push_str(opt.backend.prelude());
@@ -1011,6 +1045,46 @@ impl DetectLog {
         let order_s: Vec<String> = order.iter().map(|s| format!("{s:?}")).collect();
         writeln!(out, "    /// Device bring-up order (dependency graph of the device tree).").unwrap();
         writeln!(out, "    pub const INIT_ORDER: &[&str] = &[{}];", order_s.join(", ")).unwrap();
+        let rev: Vec<&String> = order_s.iter().rev().collect();
+        let rev: Vec<&str> = rev.iter().map(|s| s.as_str()).collect();
+        writeln!(out, "    /// Suspend order: `INIT_ORDER` reversed (resume in `INIT_ORDER`).").unwrap();
+        writeln!(out, "    pub const SUSPEND_ORDER: &[&str] = &[{}];", rev.join(", ")).unwrap();
+        // Power management (doc/13).
+        let wake = crate::wakeup_sources(b)?;
+        let items: Vec<String> = wake
+            .iter()
+            .map(|w| {
+                format!(
+                    "super::WakeupSource {{ node: {:?}, pin: {}, active_low: {}, deep_sleep: {} }}",
+                    wake_label(tree, &w.path),
+                    w.pin,
+                    w.active_low,
+                    w.deep_sleep
+                )
+            })
+            .collect();
+        writeln!(out, "    /// Devices that can wake the chip (DT `wakeup-source`).").unwrap();
+        writeln!(out, "    pub const WAKEUP_SOURCES: &[super::WakeupSource] = &[{}];", items.join(", ")).unwrap();
+        let poff = match crate::power_off(b)? {
+            None => "None".to_string(),
+            Some(crate::PowerOff::Pmic { path }) => format!("Some(super::PowerOff::Pmic {{ node: {:?} }})", label(tree, &path)),
+            Some(crate::PowerOff::Gpio { path, gpio, active_ms, inactive_ms, pulses }) => format!(
+                "Some(super::PowerOff::Gpio {{ node: {:?}, gpio: super::{}, active_ms: {active_ms}, inactive_ms: {inactive_ms}, pulses: {pulses} }})",
+                label(tree, &path),
+                gpio_expr(&gpio)
+            ),
+        };
+        writeln!(out, "    /// How the board switches itself off (DT `system-power-controller` / `gpio-poweroff`).").unwrap();
+        writeln!(out, "    pub const POWER_OFF: Option<super::PowerOff> = {poff};").unwrap();
+        let rails = crate::rails(b);
+        if !rails.is_empty() {
+            writeln!(out, "\n    /// Use counts of the board's regulators (DT `regulators`), shared by their `Rail` handles.").unwrap();
+            writeln!(out, "    pub mod rails {{").unwrap();
+            for (l, always_on) in &rails {
+                writeln!(out, "        pub static {}: kumiki_class::RailCount = kumiki_class::RailCount::new({always_on});", ident_upper(l)).unwrap();
+            }
+            writeln!(out, "    }}").unwrap();
+        }
         writeln!(out, "\n    /// Chip GPIOs used by the board (see `take_pins_{}!`).", b.module).unwrap();
         writeln!(out, "    pub struct Pins {{").unwrap();
         for (field, pin) in &pins {

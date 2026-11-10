@@ -47,6 +47,17 @@
 		touch-int-gpios = <&gpio 23 GPIO_ACTIVE_HIGH>;
 	};
 
+	/* Expander #2 line 4 (PWROFF_PULSE) switches the board off: M5Unified
+	 * toggles it 10 times, 50 ms apart. Only a power-off may drive it;
+	 * bring-up never touches the line (or expander #2 at all). */
+	poweroff {
+		compatible = "gpio-poweroff";
+		gpios = <&ioexp2 4 GPIO_ACTIVE_HIGH>;
+		active-delay-ms = <50>;
+		inactive-delay-ms = <50>;
+		kumiki,pulses = <5>;
+	};
+
 	kumiki,detect {
 		compatible = "kumiki,board-detect";
 		ioexp-ack {
@@ -71,7 +82,8 @@
 		#gpio-cells = <2>;
 	};
 
-	/* Expander #2: bit 4 cuts the board's power. Never written. */
+	/* Expander #2: bit 4 cuts the board's power (the poweroff node's line).
+	 * Never written at bring-up. */
 	ioexp2: gpio@44 {
 		compatible = "diodes,pi4ioe5v6408";
 		reg = <0x44>;

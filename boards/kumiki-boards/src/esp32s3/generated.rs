@@ -44,6 +44,28 @@ impl DetectLog {
     }
 }
 
+/// A device that can wake the chip (DT `wakeup-source`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WakeupSource {
+    /// Node label.
+    pub node: &'static str,
+    /// Chip GPIO of its interrupt / key line.
+    pub pin: u8,
+    pub active_low: bool,
+    /// An RTC / LP IO: wakes from deep sleep too, not only light sleep.
+    pub deep_sleep: bool,
+}
+
+/// How the board switches itself off (DT `system-power-controller` /
+/// `gpio-poweroff`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PowerOff {
+    /// The PMIC node's driver.
+    Pmic { node: &'static str },
+    /// Drive `gpio` active `pulses` times (`active_ms` on, `inactive_ms` off).
+    Gpio { node: &'static str, gpio: Gpio, active_ms: u32, inactive_ms: u32, pulses: u32 },
+}
+
 mod prelude {
     pub use core::cell::RefCell;
     pub use embedded_graphics_core::{draw_target::DrawTarget, geometry::Size, pixelcolor::{Rgb565, RgbColor}};
@@ -66,7 +88,7 @@ mod prelude {
     pub use static_cell::StaticCell;
     pub use super::super::{
         audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs,
-        Devices, I2cBus, InitError,
+        boot_info, Devices, I2cBus, InitError,
         Spare,
     };
 }
@@ -456,6 +478,23 @@ pub mod cores3 {
     pub const NEEDS_PSRAM: bool = false;
     /// Device bring-up order (dependency graph of the device tree).
     pub const INIT_ORDER: &[&str] = &["i2c0", "pmic", "ioexp", "touch", "imu", "rtc", "spi2", "lcd", "i2s1", "speaker", "microphone", "lcd_backlight", "buttons"];
+    /// Suspend order: `INIT_ORDER` reversed (resume in `INIT_ORDER`).
+    pub const SUSPEND_ORDER: &[&str] = &["buttons", "lcd_backlight", "microphone", "speaker", "i2s1", "lcd", "spi2", "rtc", "imu", "touch", "ioexp", "pmic", "i2c0"];
+    /// Devices that can wake the chip (DT `wakeup-source`).
+    pub const WAKEUP_SOURCES: &[super::WakeupSource] = &[];
+    /// How the board switches itself off (DT `system-power-controller` / `gpio-poweroff`).
+    pub const POWER_OFF: Option<super::PowerOff> = Some(super::PowerOff::Pmic { node: "pmic" });
+
+    /// Use counts of the board's regulators (DT `regulators`), shared by their `Rail` handles.
+    pub mod rails {
+        pub static ALDO1: kumiki_class::RailCount = kumiki_class::RailCount::new(false);
+        pub static ALDO2: kumiki_class::RailCount = kumiki_class::RailCount::new(false);
+        pub static ALDO3: kumiki_class::RailCount = kumiki_class::RailCount::new(false);
+        pub static ALDO4: kumiki_class::RailCount = kumiki_class::RailCount::new(false);
+        pub static BLDO1: kumiki_class::RailCount = kumiki_class::RailCount::new(false);
+        pub static BLDO2: kumiki_class::RailCount = kumiki_class::RailCount::new(false);
+        pub static DLDO1: kumiki_class::RailCount = kumiki_class::RailCount::new(false);
+    }
 
     /// Chip GPIOs used by the board (see `take_pins_cores3!`).
     pub struct Pins {
@@ -612,6 +651,8 @@ pub mod cores3 {
         let mut pins = take_pins_cores3!(p);
         let spare = take_spare!(p);
         let mut delay = Delay::new();
+        // Read before anything else runs (doc/13 §4.4).
+        let boot = boot_info();
         // /soc/i2c@60013000 (espressif,esp32-i2c)
         let mut i2c0 = {
             if i2c0::BUS_RECOVERY {
@@ -703,6 +744,7 @@ pub mod cores3 {
         let mut buttons = ButtonInputs::TouchAsA;
         Ok(Devices {
             board: super::BoardId::M5StackCoreS3,
+            boot,
             display: lcd,
             backlight: lcd_backlight,
             touch: Some(touch),
@@ -732,6 +774,12 @@ pub mod atoms3 {
     pub const NEEDS_PSRAM: bool = false;
     /// Device bring-up order (dependency graph of the device tree).
     pub const INIT_ORDER: &[&str] = &["i2c1", "imu", "spi2", "lcd", "lcd_backlight", "buttons"];
+    /// Suspend order: `INIT_ORDER` reversed (resume in `INIT_ORDER`).
+    pub const SUSPEND_ORDER: &[&str] = &["buttons", "lcd_backlight", "lcd", "spi2", "imu", "i2c1"];
+    /// Devices that can wake the chip (DT `wakeup-source`).
+    pub const WAKEUP_SOURCES: &[super::WakeupSource] = &[super::WakeupSource { node: "buttons.button-a", pin: 41, active_low: true, deep_sleep: false }];
+    /// How the board switches itself off (DT `system-power-controller` / `gpio-poweroff`).
+    pub const POWER_OFF: Option<super::PowerOff> = None;
 
     /// Chip GPIOs used by the board (see `take_pins_atoms3!`).
     pub struct Pins {
@@ -824,6 +872,8 @@ pub mod atoms3 {
         let mut pins = take_pins_atoms3!(p);
         let spare = take_spare!(p);
         let mut delay = Delay::new();
+        // Read before anything else runs (doc/13 §4.4).
+        let boot = boot_info();
         // /soc/i2c@60027000 (espressif,esp32-i2c)
         let mut i2c1 = {
             if i2c1::BUS_RECOVERY {
@@ -866,6 +916,7 @@ pub mod atoms3 {
         let mut buttons = ButtonInputs::Gpio { a: Input::new(pins.buttons_button_a, InputConfig::default().with_pull(Pull::Up)), b: None };
         Ok(Devices {
             board: super::BoardId::M5StackAtomS3,
+            boot,
             display: lcd,
             backlight: lcd_backlight,
             touch: None,
@@ -895,6 +946,12 @@ pub mod stopwatch {
     pub const NEEDS_PSRAM: bool = true;
     /// Device bring-up order (dependency graph of the device tree).
     pub const INIT_ORDER: &[&str] = &["i2c1", "pm1", "ioe1", "spi2", "buttons", "power_seq", "touch_cst820", "touch_cst9217", "imu", "lcd", "lcd_backlight"];
+    /// Suspend order: `INIT_ORDER` reversed (resume in `INIT_ORDER`).
+    pub const SUSPEND_ORDER: &[&str] = &["lcd_backlight", "lcd", "imu", "touch_cst9217", "touch_cst820", "power_seq", "buttons", "spi2", "ioe1", "pm1", "i2c1"];
+    /// Devices that can wake the chip (DT `wakeup-source`).
+    pub const WAKEUP_SOURCES: &[super::WakeupSource] = &[];
+    /// How the board switches itself off (DT `system-power-controller` / `gpio-poweroff`).
+    pub const POWER_OFF: Option<super::PowerOff> = Some(super::PowerOff::Pmic { node: "pm1" });
 
     /// Chip GPIOs used by the board (see `take_pins_stopwatch!`).
     pub struct Pins {
@@ -1038,6 +1095,8 @@ pub mod stopwatch {
         let mut pins = take_pins_stopwatch!(p);
         let spare = take_spare!(p);
         let mut delay = Delay::new();
+        // Read before anything else runs (doc/13 §4.4).
+        let boot = boot_info();
         // /soc/i2c@60027000 (espressif,esp32-i2c)
         let mut i2c1 = {
             if i2c1::BUS_RECOVERY {
@@ -1110,6 +1169,7 @@ pub mod stopwatch {
         let mut lcd_backlight = AnyBacklight::None;
         Ok(Devices {
             board: super::BoardId::M5StackStopWatch,
+            boot,
             display: lcd,
             backlight: lcd_backlight,
             touch: touch_group,

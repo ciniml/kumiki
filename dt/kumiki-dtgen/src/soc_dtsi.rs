@@ -22,6 +22,9 @@ pub struct SocInfo {
     pub gpios: Vec<u32>,
     /// GPIOs that embedded octal PSRAM may own.
     pub octal_psram_pins: Vec<u32>,
+    /// GPIOs that are also RTC / LP IOs (`LP_GPIOn` low-power function):
+    /// powered in deep sleep, so they can wake the chip from it.
+    pub lp_gpios: Vec<u32>,
     /// I²C master instances (`I2C0`, …).
     pub i2c: Vec<String>,
     /// SPI master instances usable by the application (`SPI2`, …).
@@ -82,6 +85,17 @@ pub fn parse_metadata(text: &str) -> Result<SocInfo, Error> {
             }
         }
     }
+    for args in invocations(text, "_for_each_inner_lp_function") {
+        // `LP_GPIO3, GPIO3, _0`
+        let f: Vec<&str> = args.split(',').map(str::trim).collect();
+        if f.len() >= 2
+            && f[0].starts_with("LP_GPIO")
+            && let Some(n) = f[1].strip_prefix("GPIO").and_then(|d| d.parse::<u32>().ok())
+            && !info.lp_gpios.contains(&n)
+        {
+            info.lp_gpios.push(n);
+        }
+    }
     for args in invocations(text, "_for_each_inner_i2c_master") {
         // Individual form: `0, I2C0, I2cExt0, …`
         let f: Vec<&str> = args.split(',').map(str::trim).collect();
@@ -105,6 +119,7 @@ pub fn parse_metadata(text: &str) -> Result<SocInfo, Error> {
     }
     info.gpios.sort_unstable();
     info.octal_psram_pins.sort_unstable();
+    info.lp_gpios.sort_unstable();
     if info.gpios.is_empty() || info.i2c.is_empty() {
         return Err(Error("esp-metadata: no GPIO / I2C master entries found".into()));
     }
@@ -148,6 +163,11 @@ pub fn generate(chip: &str, info: &SocInfo, pac: &str, sources: &[String]) -> Re
         writeln!(o, "\t\t\t/* May be owned by embedded octal PSRAM (eFuse PSRAM_CAP). */").unwrap();
         writeln!(o, "\t\t\tkumiki,octal-psram-pins = <{}>;", pins.join(" ")).unwrap();
     }
+    if !info.lp_gpios.is_empty() {
+        let pins: Vec<String> = info.lp_gpios.iter().map(u32::to_string).collect();
+        writeln!(o, "\t\t\t/* RTC / LP IOs: powered in deep sleep, can wake the chip from it. */").unwrap();
+        writeln!(o, "\t\t\tkumiki,lp-io-pins = <{}>;", pins.join(" ")).unwrap();
+    }
     writeln!(o, "\t\t}};").unwrap();
     let mut nodes: Vec<(String, &str, u32, &str)> = Vec::new(); // label, instance, addr, kind
     for i in &info.i2c {
@@ -183,6 +203,8 @@ mod tests {
         _for_each_inner_i2c_master!((all(0, I2C0, I2cExt0, I2CEXT0_SCL, I2CEXT0_SDA)));
         _for_each_inner_spi_master!((SPI2)); _for_each_inner_spi_master!((SPI2, Spi2, FSPICLK[FSPICS0] [FSPID], true));
         _for_each_inner_i2s!((I2S1)); _for_each_inner_i2s!((I2S1, I2s1, I2S1_MCLK, I2S1O_BCK, [I2S1O_SD], true));
+        _for_each_inner_lp_function!((LP_GPIO1, GPIO1, _0)); _for_each_inner_lp_function!((SAR_I2C_SDA_0, GPIO1, _3));
+        _for_each_inner_lp_function!((LP_GPIO0, GPIO0, _0));
     "#;
     const PAC: &str = "pub type GPIO = crate::Periph<gpio::RegisterBlock, 0x6000_4000>;\n\
         pub type I2C0 = crate::Periph<i2c0::RegisterBlock, 0x6001_3000>;\n\
@@ -197,11 +219,13 @@ mod tests {
         assert_eq!(info.i2c, vec!["I2C0"]);
         assert_eq!(info.spi, vec!["SPI2"]);
         assert_eq!(info.i2s, vec!["I2S1"]);
+        assert_eq!(info.lp_gpios, vec![0, 1]);
         assert_eq!(pac_address(PAC, "I2C0"), Some(0x6001_3000));
         let dtsi = generate("esp32s3", &info, PAC, &[]).unwrap();
         assert!(dtsi.contains("i2c0: i2c@60013000"));
         assert!(dtsi.contains("ngpios = <4>;"));
         assert!(dtsi.contains("Not bonded out: 2."));
         assert!(dtsi.contains("kumiki,octal-psram-pins = <3>;"));
+        assert!(dtsi.contains("kumiki,lp-io-pins = <0 1>;"));
     }
 }

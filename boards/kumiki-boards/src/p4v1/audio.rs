@@ -21,22 +21,33 @@ fn rate(i2s: SharedI2s) -> u32 {
     ((i2s.borrow().actual_sample_rate_mhz() + 500) / 1000) as u32
 }
 
-/// Everest ES8388 DAC (I²S slave) with the speaker amplifier behind it.
-pub struct Es8388<I> {
+/// Everest ES8388 DAC (I²S slave) with the speaker amplifier behind it,
+/// whose enable line `amp` is.
+pub struct Es8388<I, A> {
     codec: kumiki_es8388::Es8388<I>,
+    amp: A,
     i2s: SharedI2s,
     /// Software gain, 0–256 (the DAC stays at 0 dB).
     gain: i32,
 }
 
-impl<I: I2c> Es8388<I> {
+/// `kumiki_es8388` results as I²C results (no call here has arguments that
+/// can be out of range).
+fn i2c_only<E>(r: Result<(), kumiki_es8388::Error<E>>) -> Result<(), E> {
+    match r {
+        Err(kumiki_es8388::Error::I2c(e)) => Err(e),
+        _ => Ok(()),
+    }
+}
+
+impl<I: I2c, A: OutputPin> Es8388<I, A> {
     /// Configures the DAC (the I²S controller must be running: the codec
     /// needs MCLK), then turns the amplifier on through `amp`.
-    pub fn new(i2c: I, addr: u8, i2s: SharedI2s, amp: &mut impl OutputPin) -> Result<Self, kumiki_es8388::Error<I::Error>> {
+    pub fn new(i2c: I, addr: u8, i2s: SharedI2s, mut amp: A) -> Result<Self, kumiki_es8388::Error<I::Error>> {
         let mut codec = kumiki_es8388::Es8388::new(i2c, addr);
         codec.init()?;
         let _ = amp.set_high();
-        Ok(Self { codec, i2s, gain: 256 })
+        Ok(Self { codec, amp, i2s, gain: 256 })
     }
 
     /// The codec (DAC attenuation, mute).
@@ -45,7 +56,28 @@ impl<I: I2c> Es8388<I> {
     }
 }
 
-impl<I: I2c> Speaker for Es8388<I> {
+impl<I: I2c, A: OutputPin> kumiki_class::DevicePm for Es8388<I, A> {
+    type Error = I::Error;
+    /// Suspend: amplifier off, then the DAC and chip powered down. Resume:
+    /// powered up with the same values (as `restart`, which is what makes
+    /// the Tab5's ES8388 play), then the amplifier on. An amplifier-line
+    /// failure is not reported (the codec state decides what is heard).
+    fn pm(&mut self, action: kumiki_class::PmAction) -> Result<(), I::Error> {
+        match action {
+            kumiki_class::PmAction::Suspend => {
+                let _ = self.amp.set_low();
+                i2c_only(self.codec.power_down())
+            }
+            kumiki_class::PmAction::Resume => {
+                i2c_only(self.codec.power_up())?;
+                let _ = self.amp.set_high();
+                Ok(())
+            }
+        }
+    }
+}
+
+impl<I: I2c, A: OutputPin> Speaker for Es8388<I, A> {
     type Error = I::Error;
     fn sample_rate(&self) -> u32 {
         rate(self.i2s)
@@ -78,14 +110,10 @@ impl<I: I2c> Speaker for Es8388<I> {
         // tab5-os' fix for the silence `init` leaves: DAC and chip powered
         // down for 2 ms, then powered up again without `init` (power_down +
         // init alternates between playing and silent; see
-        // `Es8388::power_down`). Neither call has arguments to be out of range.
-        let i2c = |r: Result<(), kumiki_es8388::Error<I::Error>>| match r {
-            Err(kumiki_es8388::Error::I2c(e)) => Err(e),
-            _ => Ok(()),
-        };
-        i2c(self.codec.power_down())?;
+        // `Es8388::power_down`).
+        i2c_only(self.codec.power_down())?;
         kumiki_p4v1_hal::time::delay_us(2_000);
-        i2c(self.codec.power_up())
+        i2c_only(self.codec.power_up())
     }
 }
 
@@ -106,6 +134,18 @@ impl<I: I2c> Es7210<I> {
     /// The codec (gain).
     pub fn codec(&mut self) -> &mut kumiki_es7210::Es7210<I> {
         &mut self.codec
+    }
+}
+
+impl<I: I2c> kumiki_class::DevicePm for Es7210<I> {
+    type Error = I::Error;
+    /// MIC1 / MIC2 powered down / up (`Es7210::set_mics_powered`); the
+    /// shared I²S controller keeps running for the speaker.
+    fn pm(&mut self, action: kumiki_class::PmAction) -> Result<(), I::Error> {
+        match self.codec.set_mics_powered(action == kumiki_class::PmAction::Resume) {
+            Err(kumiki_es7210::Error::I2c(e)) => Err(e),
+            _ => Ok(()),
+        }
     }
 }
 

@@ -223,6 +223,22 @@ impl<I: I2c> Bmi270<I> {
         Ok(())
     }
 
+    /// Switches the accelerometer, gyroscope and temperature sensor off and
+    /// enables advanced power save (suspend; the uploaded configuration is
+    /// kept). [`resume`](Self::resume) undoes it.
+    pub fn suspend(&mut self) -> Result<(), Error<I::Error>> {
+        self.write(REG_PWR_CTRL, 0x00)?;
+        self.write(REG_PWR_CONF, 0x01)
+    }
+
+    /// Leaves [`suspend`](Self::suspend): advanced power save off (the chip
+    /// needs 450 µs before the next write), then the sensors on again.
+    pub fn resume(&mut self, delay: &mut impl DelayNs) -> Result<(), Error<I::Error>> {
+        self.write(REG_PWR_CONF, 0x00)?;
+        delay.delay_us(450);
+        self.write(REG_PWR_CTRL, 0x0E)
+    }
+
     /// Raw accelerometer sample.
     pub fn accel_raw(&mut self) -> Result<Raw3, Error<I::Error>> {
         let mut b = [0u8; 6];

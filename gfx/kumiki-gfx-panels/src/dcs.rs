@@ -21,6 +21,8 @@ const INVOFF: u8 = 0x20;
 const INVON: u8 = 0x21;
 const SLPIN: u8 = 0x10;
 const SLPOUT: u8 = 0x11;
+const DISPOFF: u8 = 0x28;
+const DISPON: u8 = 0x29;
 
 const MAD_MY: u8 = 0x80;
 const MAD_MX: u8 = 0x40;
@@ -247,9 +249,15 @@ impl<B: PanelBus, M: Model, RST: OutputPin> DcsPanel<B, M, RST> {
         self.bus.command(MADCTL, &[m])
     }
 
-    /// Enter/leave sleep mode.
+    /// Enter/leave sleep mode. MIPI DCS: wait 5 ms after SLPIN and 120 ms
+    /// after SLPOUT before the next command.
     pub fn sleep(&mut self, on: bool) -> Result<(), BErr<B>> {
         self.bus.command(if on { SLPIN } else { SLPOUT }, &[])
+    }
+
+    /// Show / blank the picture (DISPON / DISPOFF); the frame memory is kept.
+    pub fn set_display_on(&mut self, on: bool) -> Result<(), BErr<B>> {
+        self.bus.command(if on { DISPON } else { DISPOFF }, &[])
     }
 }
 

@@ -60,6 +60,7 @@
 	pmic: pmic@34 {
 		compatible = "x-powers,axp2101";
 		reg = <0x34>;
+		system-power-controller;
 		/* As M5Unified board_M5StackCoreS3: ALDO1 AW88298, ALDO2 ES7210, ALDO3 camera/LCD, ALDO4 TF card. */
 		regulators {
 			aldo1: ALDO1 { regulator-min-microvolt = <1800000>; regulator-max-microvolt = <1800000>; regulator-boot-on; };

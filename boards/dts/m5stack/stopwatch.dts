@@ -64,6 +64,7 @@
 	pm1: pmic@6e {
 		compatible = "m5stack,m5pm1";
 		reg = <0x6e>;
+		system-power-controller; /* register 0x0C bits 1:0 = 01 (M5Unified) */
 	};
 
 	ioe1: gpio@4f {

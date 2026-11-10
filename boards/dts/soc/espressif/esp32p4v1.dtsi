@@ -25,6 +25,10 @@
 			gpio-controller;
 			#gpio-cells = <2>;
 			ngpios = <55>;
+			/* LP IOs: powered in deep sleep, can wake the chip from it
+			 * (soc_caps.h SOC_RTCIO_PIN_COUNT 16,
+			 * SOC_GPIO_DEEP_SLEEP_WAKE_VALID_GPIO_MASK 0xFFFF). */
+			kumiki,lp-io-pins = <0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15>;
 		};
 
 		i2c0: i2c@500c4000 {

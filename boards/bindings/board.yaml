@@ -73,6 +73,18 @@
     io-expander: { type: phandle, required: true }
     touch-int-gpios: { type: gpios, required: true }
 
+# Linux `gpio-poweroff`: driving the line active switches the board off.
+# Bring-up never touches the line (kumiki-dtgen also refuses gpio-hogs on it
+# and leaves it out of expander line set-up); only a power-off does (doc/13).
+- compatible: "gpio-poweroff"
+  kumiki: { init: "()" }
+  properties:
+    gpios: { type: gpios, required: true }
+    active-delay-ms: { type: int, description: "time the line is held active (Linux default 100)" }
+    inactive-delay-ms: { type: int, description: "time between pulses (Linux default 100)" }
+    timeout-ms: { type: int }
+    kumiki,pulses: { type: int, description: "number of active pulses (default 1; some boards need several)" }
+
 - compatible: "kumiki,board-detect"
   properties: {}
 

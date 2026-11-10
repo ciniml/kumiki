@@ -141,6 +141,20 @@ impl<I: I2c> Mpu6886<I> {
         Ok(())
     }
 
+    /// Sleep mode (`PWR_MGMT_1.SLEEP`, keeping the clock source of `init`);
+    /// the configuration is kept. [`resume`](Self::resume) undoes it.
+    pub fn suspend(&mut self) -> Result<(), Error<I::Error>> {
+        self.i2c.write(self.addr, &[REG_PWR_MGMT_1, 0x41]).map_err(Error::I2c)
+    }
+
+    /// Leaves sleep mode; samples are valid again after the sensors' start-up
+    /// time (gyroscope ~35 ms), which this waits.
+    pub fn resume(&mut self, delay: &mut impl DelayNs) -> Result<(), Error<I::Error>> {
+        self.i2c.write(self.addr, &[REG_PWR_MGMT_1, 0x01]).map_err(Error::I2c)?;
+        delay.delay_ms(35);
+        Ok(())
+    }
+
     /// Raw accelerometer sample.
     pub fn accel_raw(&mut self) -> Result<Raw3, Error<I::Error>> {
         let mut b = [0u8; 6];

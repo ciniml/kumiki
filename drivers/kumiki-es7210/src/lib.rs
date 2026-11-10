@@ -114,6 +114,13 @@ impl<I: I2c> Es7210<I> {
         Ok(())
     }
 
+    /// Powers the MIC1 / MIC2 inputs (bias, PGA, ADC) down or up again
+    /// (`MIC12_PDN` = 0xFF / 0x00, the values `init` uses for MIC3 / MIC4
+    /// and MIC1 / MIC2). The rest of the configuration is kept.
+    pub fn set_mics_powered(&mut self, on: bool) -> Result<(), Error<I::Error>> {
+        self.write(0x4B, if on { 0x00 } else { 0xFF })
+    }
+
     /// Sets the analogue gain of `mic` (`code` 0..=[`MAX_GAIN_CODE`]).
     pub fn set_gain(&mut self, mic: Mic, code: u8) -> Result<(), Error<I::Error>> {
         if code > MAX_GAIN_CODE {

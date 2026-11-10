@@ -113,6 +113,8 @@ pub enum ButtonInputs {
 pub struct Devices {
     /// Which board was detected.
     pub board: BoardId,
+    /// How the chip started (cold boot, reset, deep-sleep wake).
+    pub boot: kumiki_class::BootInfo,
     /// Display (embedded-graphics `DrawTarget` + `FastDraw`).
     pub display: AnyDisplay,
     /// Backlight.
@@ -173,6 +175,29 @@ impl ButtonInputs {
             }
         }
     }
+}
+
+/// Reset reason and sleep wake-up cause of this boot (read by the generated
+/// `init` before bring-up; doc/13 §4.4).
+pub fn boot_info() -> kumiki_class::BootInfo {
+    use esp_hal::rtc_cntl::{WakeupSource as W, reset_reason, wakeup_cause};
+    use kumiki_class::{BootInfo, WakeCause};
+    let code = reset_reason(esp_hal::system::Cpu::ProCpu).map(|r| r as u8).unwrap_or(0);
+    let w = wakeup_cause();
+    let wake = if w.is_empty() {
+        WakeCause::NotFromSleep
+    } else if w.contains(W::Timer) {
+        WakeCause::Timer
+    } else if w.contains(W::Ext0) || w.contains(W::Ext1) || w.contains(W::Gpio) {
+        WakeCause::Gpio
+    } else if w.contains(W::Uart0) || w.contains(W::Uart1) {
+        WakeCause::Uart
+    } else if w.contains(W::Touch) {
+        WakeCause::Touch
+    } else {
+        WakeCause::Unknown
+    };
+    BootInfo { reset: crate::espressif::reset_reason(code), wake }
 }
 
 /// Detect the board and bring every device up. Call once, after `esp_hal::init`.

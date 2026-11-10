@@ -11,7 +11,9 @@ use embedded_graphics_core::{
     primitives::Rectangle,
     Pixel,
 };
-use kumiki_class::{Backlight, DateTime, Imu, Microphone, Power, Rtc, Speaker, Touch, TouchPoint, Vec3};
+use embedded_hal::delay::DelayNs as _;
+use esp_hal::delay::Delay;
+use kumiki_class::{Backlight, DateTime, DevicePm, Imu, Microphone, PmAction, Power, Rtc, Speaker, Touch, TouchPoint, Vec3};
 use kumiki_gfx::{AsyncFastDraw, FastDraw, PixelFormat, Rgb565Be};
 use kumiki_gfx_bus_esp::Error as BusError;
 
@@ -28,6 +30,8 @@ pub enum AnyError {
     I2c(I2cError),
     /// The device reported an unexpected state.
     Device,
+    /// Not supported by this device (yet), e.g. suspending a touch panel.
+    Unsupported,
 }
 
 impl From<I2cError> for AnyError {
@@ -258,5 +262,78 @@ impl Power for AnyPower {
     }
     fn vbus_present(&mut self) -> Result<Option<bool>, AnyError> {
         any_power!(self, p => p.vbus_present().map_err(AnyError::from))
+    }
+}
+
+// ---- power management (doc/13) ---------------------------------------------------
+//
+// Backlight, power and RTC have no `DevicePm`: a backlight is switched by
+// its brightness (0 = off), and the PMIC and the battery-backed RTC stay on.
+
+impl DevicePm for AnyDisplay {
+    type Error = BusError;
+    /// Suspend: picture off (DISPOFF), then SLPIN (the controller keeps its
+    /// frame memory). Resume: SLPOUT, 120 ms, DISPON. Switch the backlight
+    /// off before suspending and on after resuming.
+    fn pm(&mut self, action: PmAction) -> Result<(), BusError> {
+        let mut delay = Delay::new();
+        macro_rules! dcs {
+            ($panel:expr) => {{
+                let p = $panel;
+                match action {
+                    PmAction::Suspend => {
+                        p.set_display_on(false)?;
+                        p.sleep(true)?;
+                        delay.delay_ms(5);
+                    }
+                    PmAction::Resume => {
+                        p.sleep(false)?;
+                        delay.delay_ms(120);
+                        p.set_display_on(true)?;
+                    }
+                }
+                Ok(())
+            }};
+        }
+        match self {
+            AnyDisplay::Ili9342c(d) => dcs!(d.panel()),
+            AnyDisplay::Gc9107(d) => dcs!(d.panel()),
+            AnyDisplay::Co5300(d) => dcs!(d.target_mut().panel()),
+        }
+    }
+}
+
+impl DevicePm for AnyTouch {
+    type Error = AnyError;
+    /// Not supported yet: the controllers' sleep modes need their reset /
+    /// interrupt lines to wake, which the drivers do not own.
+    fn pm(&mut self, _action: PmAction) -> Result<(), AnyError> {
+        Err(AnyError::Unsupported)
+    }
+}
+
+impl DevicePm for AnyImu {
+    type Error = AnyError;
+    /// The chip's suspend / sleep mode (configuration kept).
+    fn pm(&mut self, action: PmAction) -> Result<(), AnyError> {
+        any_imu!(self, m => match action {
+            PmAction::Suspend => m.suspend(),
+            PmAction::Resume => m.resume(&mut Delay::new()),
+        }
+        .map_err(AnyError::from))
+    }
+}
+
+impl DevicePm for AnySpeaker {
+    type Error = AnyError;
+    fn pm(&mut self, action: PmAction) -> Result<(), AnyError> {
+        any_speaker!(self, s => s.pm(action).map_err(AnyError::from))
+    }
+}
+
+impl DevicePm for AnyMicrophone {
+    type Error = AnyError;
+    fn pm(&mut self, action: PmAction) -> Result<(), AnyError> {
+        any_microphone!(self, m => m.pm(action).map_err(AnyError::from))
     }
 }

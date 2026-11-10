@@ -42,6 +42,28 @@ impl DetectLog {
     }
 }
 
+/// A device that can wake the chip (DT `wakeup-source`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct WakeupSource {
+    /// Node label.
+    pub node: &'static str,
+    /// Chip GPIO of its interrupt / key line.
+    pub pin: u8,
+    pub active_low: bool,
+    /// An RTC / LP IO: wakes from deep sleep too, not only light sleep.
+    pub deep_sleep: bool,
+}
+
+/// How the board switches itself off (DT `system-power-controller` /
+/// `gpio-poweroff`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PowerOff {
+    /// The PMIC node's driver.
+    Pmic { node: &'static str },
+    /// Drive `gpio` active `pulses` times (`active_ms` on, `inactive_ms` off).
+    Gpio { node: &'static str, gpio: Gpio, active_ms: u32, inactive_ms: u32, pulses: u32 },
+}
+
 mod prelude {
     #![allow(unused_imports)]
     pub use core::cell::RefCell;
@@ -60,7 +82,7 @@ mod prelude {
     pub use static_cell::StaticCell;
     pub use super::super::{
         audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs,
-        Devices, I2cBus, InitError, Spare,
+        boot_info, Devices, I2cBus, InitError, Spare,
     };
 }
 
@@ -218,7 +240,7 @@ macro_rules! any_rtc {
 /// Audio output of any board in this family (generated from the bindings).
 pub enum AnySpeaker {
     /// `everest,es8388` (M5Stack Tab5).
-    Es8388(audio::Es8388<SharedI2c>),
+    Es8388(audio::Es8388<SharedI2c, chips::Pi4ioePin<SharedI2c>>),
 }
 
 impl AnySpeaker {
@@ -341,7 +363,13 @@ pub mod tab5 {
     /// Needs PSRAM (a frame buffer lives there).
     pub const NEEDS_PSRAM: bool = true;
     /// Device bring-up order (dependency graph of the device tree).
-    pub const INIT_ORDER: &[&str] = &["i2c1", "ioexp1", "ioexp2", "imu", "rtc", "i2s0", "speaker", "microphone", "dsi", "display_power", "touch_gt911_14", "touch_gt911_5d", "lcd", "lcd_backlight", "buttons"];
+    pub const INIT_ORDER: &[&str] = &["i2c1", "ioexp1", "ioexp2", "imu", "rtc", "i2s0", "speaker", "microphone", "dsi", "display_power", "touch_gt911_14", "touch_gt911_5d", "lcd", "lcd_backlight", "buttons", "poweroff"];
+    /// Suspend order: `INIT_ORDER` reversed (resume in `INIT_ORDER`).
+    pub const SUSPEND_ORDER: &[&str] = &["poweroff", "buttons", "lcd_backlight", "lcd", "touch_gt911_5d", "touch_gt911_14", "display_power", "dsi", "microphone", "speaker", "i2s0", "rtc", "imu", "ioexp2", "ioexp1", "i2c1"];
+    /// Devices that can wake the chip (DT `wakeup-source`).
+    pub const WAKEUP_SOURCES: &[super::WakeupSource] = &[];
+    /// How the board switches itself off (DT `system-power-controller` / `gpio-poweroff`).
+    pub const POWER_OFF: Option<super::PowerOff> = Some(super::PowerOff::Gpio { node: "poweroff", gpio: super::Gpio::Expander { controller: "ioexp2", pin: 4, active_low: false }, active_ms: 50, inactive_ms: 50, pulses: 5 });
 
     /// Chip GPIOs used by the board (see `take_pins_tab5!`).
     pub struct Pins {
@@ -498,6 +526,20 @@ pub mod tab5 {
         pub const IO_EXPANDER: &str = "ioexp1";
         pub const TOUCH_INT_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 23, active_low: false }];
     }
+    /// `/poweroff` (gpio-poweroff).
+    pub mod poweroff {
+        #[allow(unused_imports)]
+        use super::super::Gpio;
+        pub const COMPATIBLE: &str = "gpio-poweroff";
+        /// time the line is held active (Linux default 100)
+        pub const ACTIVE_DELAY_MS: Option<u32> = Some(50);
+        pub const GPIOS: &[Gpio] = &[Gpio::Expander { controller: "ioexp2", pin: 4, active_low: false }];
+        /// time between pulses (Linux default 100)
+        pub const INACTIVE_DELAY_MS: Option<u32> = Some(50);
+        /// number of active pulses (default 1; some boards need several)
+        pub const PULSES: Option<u32> = Some(5);
+        pub const TIMEOUT_MS: Option<u32> = None;
+    }
 
     /// Bring the board up in `INIT_ORDER` (generated from the binding templates).
     #[inline(never)]
@@ -506,6 +548,8 @@ pub mod tab5 {
         let mut pins = take_pins_tab5!(p);
         let spare = take_spare!(p);
         let mut delay = Delay;
+        // Read before anything else runs (doc/13 §4.4).
+        let boot = boot_info();
         // /soc/i2c@500c5000 (espressif,esp32p4-i2c)
         let mut i2c1 = {
             static CELL: StaticCell<RefCell<I2cBus>> = StaticCell::new();
@@ -548,8 +592,8 @@ pub mod tab5 {
         };
         // /soc/i2c@500c5000/codec@10 (everest,es8388)
         let mut speaker = {
-            let mut amp = chips::Pi4ioePin { i2c: RefCellDevice::new(i2c1), addr: ioexp1::ADDR, line: 1 };
-            audio::Es8388::new(RefCellDevice::new(i2c1), speaker::ADDR, i2s0, &mut amp).ok().map(AnySpeaker::Es8388)
+            let amp = chips::Pi4ioePin { i2c: RefCellDevice::new(i2c1), addr: ioexp1::ADDR, line: 1 };
+            audio::Es8388::new(RefCellDevice::new(i2c1), speaker::ADDR, i2s0, amp).ok().map(AnySpeaker::Es8388)
         };
         // /soc/i2c@500c5000/adc@40 (everest,es7210)
         let mut microphone = audio::Es7210::new(RefCellDevice::new(i2c1), microphone::ADDR, i2s0).ok().map(AnyMicrophone::Es7210);
@@ -583,8 +627,11 @@ pub mod tab5 {
         let mut lcd_backlight = AnyBacklight::Gpio(kumiki_class::GpioBacklight(Output::new(pins.lcd_backlight, true)));
         // /buttons (kumiki,touch-keys)
         let mut buttons = ButtonInputs::TouchAsA;
+        // /poweroff (gpio-poweroff)
+        let mut poweroff = ();
         Ok(Devices {
             board: super::BoardId::M5StackTab5,
+            boot,
             display: lcd,
             backlight: lcd_backlight,
             touch: touch_group,

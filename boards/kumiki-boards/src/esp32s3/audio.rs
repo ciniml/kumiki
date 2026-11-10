@@ -169,6 +169,18 @@ impl<I: I2c> Es7210<I> {
     }
 }
 
+impl<I: I2c> kumiki_class::DevicePm for Es7210<I> {
+    type Error = I::Error;
+    /// MIC1 / MIC2 powered down / up (`Es7210::set_mics_powered`); the I²S
+    /// stream keeps running (it reads silence meanwhile).
+    fn pm(&mut self, action: kumiki_class::PmAction) -> Result<(), I::Error> {
+        match self.codec.set_mics_powered(action == kumiki_class::PmAction::Resume) {
+            Err(kumiki_es7210::Error::I2c(e)) => Err(e),
+            _ => Ok(()),
+        }
+    }
+}
+
 impl<I: I2c> Microphone for Es7210<I> {
     type Error = I::Error;
     fn sample_rate(&self) -> u32 {
@@ -282,6 +294,18 @@ impl<I: I2c> Aw88298<I> {
     /// the speaker is disabled; [`Aw88298::new`] turns it on again.
     pub fn amp_off(&mut self) -> Result<(), I::Error> {
         aw_write(&mut self.i2c, self.addr, 0x04, 0x4000)
+    }
+}
+
+impl<I: I2c> kumiki_class::DevicePm for Aw88298<I> {
+    type Error = I::Error;
+    /// Suspend: [`amp_off`](Aw88298::amp_off) (SYSCTRL 0x4000, as M5Unified
+    /// disables the speaker). Resume: SYSCTRL 0x4040 as in `new`.
+    fn pm(&mut self, action: kumiki_class::PmAction) -> Result<(), I::Error> {
+        match action {
+            kumiki_class::PmAction::Suspend => self.amp_off(),
+            kumiki_class::PmAction::Resume => aw_write(&mut self.i2c, self.addr, 0x04, 0x4040),
+        }
     }
 }
 

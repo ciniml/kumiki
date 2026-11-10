@@ -19,6 +19,7 @@
     ngpios: { type: int, required: true }
     reg: { type: array }
     kumiki,octal-psram-pins: { type: array, description: "GPIOs owned by embedded octal PSRAM" }
+    kumiki,lp-io-pins: { type: array, description: "RTC / LP IOs: powered in deep sleep, can wake the chip from it" }
 
 - compatible: "espressif,esp32-i2c"
   kumiki:
@@ -80,6 +81,7 @@
     "#gpio-cells": { type: int, required: true }
     ngpios: { type: int, required: true }
     reg: { type: array }
+    kumiki,lp-io-pins: { type: array, description: "LP IOs: powered in deep sleep, can wake the chip from it" }
 
 - compatible: "espressif,esp32p4-i2c"
   kumiki:

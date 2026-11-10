@@ -27,6 +27,8 @@
 		button-a {
 			gpios = <&gpio 41 GPIO_ACTIVE_LOW>; /* the screen is the button */
 			kumiki,button = "a";
+			/* Light sleep only: GPIO41 is not an RTC IO. */
+			wakeup-source;
 		};
 	};
 

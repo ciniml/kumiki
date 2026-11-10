@@ -27,7 +27,9 @@ use embedded_graphics::{
     text::Text,
 };
 use kumiki_boards::Devices;
-use kumiki_class::{Backlight, ButtonKind, Buttons, Imu, Microphone, Power, Rtc, Speaker, Touch, TouchPoint};
+use kumiki_class::{
+    Backlight, ButtonKind, Buttons, DevicePm, Imu, Microphone, PmAction, Power, Rtc, Speaker, Touch, TouchPoint,
+};
 use kumiki_gfx::{FastDraw, Rgb565Be, Sprite, Viewport};
 
 use crate::platform::{delay_ms, now_ms};
@@ -204,11 +206,32 @@ fn audio_selftest<S: Speaker, M: Microphone>(s: &mut S, m: &mut M, ms: u32) -> (
     best
 }
 
+/// Speaker suspend / resume, checked through the microphone (doc/13): while
+/// suspended the 1 kHz tone must not be heard, after resuming it must be.
+fn speaker_pm_check<S: Speaker + DevicePm, M: Microphone>(s: &mut S, m: &mut M) {
+    if let Err(e) = s.pm(PmAction::Suspend) {
+        println!("speaker pm: suspend failed: {e:?}");
+        return;
+    }
+    let quiet = audio_selftest(s, m, 300).0;
+    if let Err(e) = s.pm(PmAction::Resume) {
+        println!("speaker pm: resume failed: {e:?}");
+        return;
+    }
+    let back = audio_selftest(s, m, 300).0;
+    let ok = quiet < SELFTEST_MIN && back >= SELFTEST_MIN;
+    println!(
+        "speaker pm: suspended {quiet} (< {SELFTEST_MIN}), resumed {back} (>= {SELFTEST_MIN}): {}",
+        if ok { "ok" } else { "FAILED" }
+    );
+}
+
 /// Runs the demo on the brought-up board; never returns.
 pub fn run(dev: Devices) -> ! {
     let Devices {
-        board, mut display, mut backlight, mut touch, mut imu, mut power, mut rtc, mut speaker, mut microphone, mut buttons, ..
+        board, boot, mut display, mut backlight, mut touch, mut imu, mut power, mut rtc, mut speaker, mut microphone, mut buttons, ..
     } = dev;
+    println!("kumiki-demo: boot {:?} (warm: {})", boot, boot.is_warm());
     println!(
         "kumiki-demo: detected {} (touch: {}, imu: {}, power: {}, rtc: {}, speaker: {}, mic: {})",
         board.name(),
@@ -230,14 +253,24 @@ pub fn run(dev: Devices) -> ! {
         beep(s, 990, 80);
         if let Some(m) = microphone.as_mut() {
             delay_ms(100);
-            if audio_selftest(s, m, 400).0 < SELFTEST_MIN {
+            let mut ok = audio_selftest(s, m, 400).0 >= SELFTEST_MIN;
+            if !ok {
                 println!("audio selftest: no tone, restarting the speaker");
                 s.restart().ok();
-                if audio_selftest(s, m, 400).0 < SELFTEST_MIN {
+                ok = audio_selftest(s, m, 400).0 >= SELFTEST_MIN;
+                if !ok {
                     retest_at = Some(now_ms() + 10_000);
                 }
             }
+            if ok {
+                speaker_pm_check(s, m);
+            }
         }
+    }
+    if let Some(i) = imu.as_mut() {
+        // Suspend / resume round trip (the readings on page 1 show it came back).
+        let r = i.pm(PmAction::Suspend).and_then(|_| i.pm(PmAction::Resume));
+        println!("imu pm: suspend + resume {:?}", r);
     }
     if let Some(r) = rtc.as_mut() {
         println!("rtc: {:?}, power lost: {:?}", r.datetime(), r.power_lost());

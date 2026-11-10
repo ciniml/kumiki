@@ -50,6 +50,7 @@ pub mod i2c;
 pub mod i2s;
 pub mod ppa;
 pub mod psram;
+pub mod reset;
 #[cfg(feature = "rt")]
 pub mod rt;
 pub mod time;

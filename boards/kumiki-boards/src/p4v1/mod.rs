@@ -86,6 +86,8 @@ pub struct Spare {}
 pub struct Devices {
     /// Which board was detected.
     pub board: BoardId,
+    /// How the chip started (cold boot, reset, deep-sleep wake).
+    pub boot: kumiki_class::BootInfo,
     /// Display (embedded-graphics `DrawTarget` + `FastDraw`).
     pub display: AnyDisplay,
     /// Backlight.
@@ -106,6 +108,15 @@ pub struct Devices {
     pub buttons: ButtonInputs,
     /// Peripherals the board definition does not use.
     pub spare: Spare,
+}
+
+/// Reset reason of this boot (read by the generated `init` before bring-up;
+/// doc/13 §4.4). The wake-up cause of a deep-sleep wake is not decoded yet.
+pub fn boot_info() -> kumiki_class::BootInfo {
+    use kumiki_class::{BootInfo, ResetReason, WakeCause};
+    let reset = crate::espressif::reset_reason(kumiki_p4v1_hal::reset::reason_code());
+    let wake = if reset == ResetReason::DeepSleep { WakeCause::Unknown } else { WakeCause::NotFromSleep };
+    BootInfo { reset, wake }
 }
 
 /// Bring the chip up (cache line size, PSRAM, 360 MHz CPU), detect the
