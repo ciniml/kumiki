@@ -93,6 +93,68 @@ mod prelude {
     };
 }
 
+/// Chip resources the detected board does not use, handed to the application.
+/// `None`: the board uses it (or, for the octal-PSRAM pins, the chip's PSRAM does).
+/// SPI flash / quad PSRAM pins are never listed.
+pub struct Free {
+    pub gpio0: Option<esp_hal::peripherals::GPIO0<'static>>,
+    pub gpio1: Option<esp_hal::peripherals::GPIO1<'static>>,
+    pub gpio2: Option<esp_hal::peripherals::GPIO2<'static>>,
+    pub gpio3: Option<esp_hal::peripherals::GPIO3<'static>>,
+    pub gpio4: Option<esp_hal::peripherals::GPIO4<'static>>,
+    pub gpio5: Option<esp_hal::peripherals::GPIO5<'static>>,
+    pub gpio6: Option<esp_hal::peripherals::GPIO6<'static>>,
+    pub gpio7: Option<esp_hal::peripherals::GPIO7<'static>>,
+    pub gpio8: Option<esp_hal::peripherals::GPIO8<'static>>,
+    pub gpio9: Option<esp_hal::peripherals::GPIO9<'static>>,
+    pub gpio10: Option<esp_hal::peripherals::GPIO10<'static>>,
+    pub gpio11: Option<esp_hal::peripherals::GPIO11<'static>>,
+    pub gpio12: Option<esp_hal::peripherals::GPIO12<'static>>,
+    pub gpio13: Option<esp_hal::peripherals::GPIO13<'static>>,
+    pub gpio14: Option<esp_hal::peripherals::GPIO14<'static>>,
+    pub gpio15: Option<esp_hal::peripherals::GPIO15<'static>>,
+    pub gpio16: Option<esp_hal::peripherals::GPIO16<'static>>,
+    pub gpio17: Option<esp_hal::peripherals::GPIO17<'static>>,
+    pub gpio18: Option<esp_hal::peripherals::GPIO18<'static>>,
+    pub gpio19: Option<esp_hal::peripherals::GPIO19<'static>>,
+    pub gpio20: Option<esp_hal::peripherals::GPIO20<'static>>,
+    pub gpio21: Option<esp_hal::peripherals::GPIO21<'static>>,
+    pub gpio33: Option<esp_hal::peripherals::GPIO33<'static>>,
+    pub gpio34: Option<esp_hal::peripherals::GPIO34<'static>>,
+    pub gpio35: Option<esp_hal::peripherals::GPIO35<'static>>,
+    pub gpio36: Option<esp_hal::peripherals::GPIO36<'static>>,
+    pub gpio37: Option<esp_hal::peripherals::GPIO37<'static>>,
+    pub gpio38: Option<esp_hal::peripherals::GPIO38<'static>>,
+    pub gpio39: Option<esp_hal::peripherals::GPIO39<'static>>,
+    pub gpio40: Option<esp_hal::peripherals::GPIO40<'static>>,
+    pub gpio41: Option<esp_hal::peripherals::GPIO41<'static>>,
+    pub gpio42: Option<esp_hal::peripherals::GPIO42<'static>>,
+    pub gpio43: Option<esp_hal::peripherals::GPIO43<'static>>,
+    pub gpio44: Option<esp_hal::peripherals::GPIO44<'static>>,
+    pub gpio45: Option<esp_hal::peripherals::GPIO45<'static>>,
+    pub gpio46: Option<esp_hal::peripherals::GPIO46<'static>>,
+    pub gpio47: Option<esp_hal::peripherals::GPIO47<'static>>,
+    pub gpio48: Option<esp_hal::peripherals::GPIO48<'static>>,
+    pub dma_ch0: Option<esp_hal::peripherals::DMA_CH0<'static>>,
+    pub dma_ch1: Option<esp_hal::peripherals::DMA_CH1<'static>>,
+    pub i2c0: Option<esp_hal::peripherals::I2C0<'static>>,
+    pub i2c1: Option<esp_hal::peripherals::I2C1<'static>>,
+    pub i2s1: Option<esp_hal::peripherals::I2S1<'static>>,
+    pub psram: Option<esp_hal::peripherals::PSRAM<'static>>,
+    pub spi2: Option<esp_hal::peripherals::SPI2<'static>>,
+}
+
+impl Free {
+    /// Drop the pins embedded octal PSRAM owns (call on such chips).
+    pub fn withhold_octal_psram_pins(&mut self) {
+        self.gpio33 = None;
+        self.gpio34 = None;
+        self.gpio35 = None;
+        self.gpio36 = None;
+        self.gpio37 = None;
+    }
+}
+
 use super::*;
 
 /// Display of any board in this family (generated from the bindings).
@@ -742,6 +804,54 @@ pub mod cores3 {
         };
         // /buttons (kumiki,touch-keys)
         let mut buttons = ButtonInputs::TouchAsA;
+        // Chip resources this board leaves unused.
+        let free = super::Free {
+            gpio0: None,
+            gpio1: Some(p.GPIO1),
+            gpio2: Some(p.GPIO2),
+            gpio3: None,
+            gpio4: Some(p.GPIO4),
+            gpio5: Some(p.GPIO5),
+            gpio6: Some(p.GPIO6),
+            gpio7: Some(p.GPIO7),
+            gpio8: Some(p.GPIO8),
+            gpio9: Some(p.GPIO9),
+            gpio10: Some(p.GPIO10),
+            gpio11: None,
+            gpio12: None,
+            gpio13: None,
+            gpio14: None,
+            gpio15: Some(p.GPIO15),
+            gpio16: Some(p.GPIO16),
+            gpio17: Some(p.GPIO17),
+            gpio18: Some(p.GPIO18),
+            gpio19: Some(p.GPIO19),
+            gpio20: Some(p.GPIO20),
+            gpio21: Some(p.GPIO21),
+            gpio33: None,
+            gpio34: None,
+            gpio35: None,
+            gpio36: None,
+            gpio37: None,
+            gpio38: Some(p.GPIO38),
+            gpio39: Some(p.GPIO39),
+            gpio40: Some(p.GPIO40),
+            gpio41: Some(p.GPIO41),
+            gpio42: Some(p.GPIO42),
+            gpio43: Some(p.GPIO43),
+            gpio44: Some(p.GPIO44),
+            gpio45: Some(p.GPIO45),
+            gpio46: Some(p.GPIO46),
+            gpio47: Some(p.GPIO47),
+            gpio48: Some(p.GPIO48),
+            dma_ch0: None,
+            dma_ch1: None,
+            i2c0: None,
+            i2c1: Some(p.I2C1),
+            i2s1: None,
+            psram: Some(p.PSRAM),
+            spi2: None,
+        };
         Ok(Devices {
             board: super::BoardId::M5StackCoreS3,
             boot,
@@ -754,6 +864,8 @@ pub mod cores3 {
             speaker: speaker,
             microphone: microphone,
             buttons: buttons,
+            i2c: Some(i2c0),
+            free,
             spare,
         })
     }
@@ -914,6 +1026,54 @@ pub mod atoms3 {
         let mut lcd_backlight = AnyBacklight::Gpio(kumiki_class::GpioBacklight(Output::new(pins.lcd_backlight, Level::High, OutputConfig::default())));
         // /buttons (gpio-keys)
         let mut buttons = ButtonInputs::Gpio { a: Input::new(pins.buttons_button_a, InputConfig::default().with_pull(Pull::Up)), b: None };
+        // Chip resources this board leaves unused.
+        let free = super::Free {
+            gpio0: Some(p.GPIO0),
+            gpio1: Some(p.GPIO1),
+            gpio2: Some(p.GPIO2),
+            gpio3: Some(p.GPIO3),
+            gpio4: Some(p.GPIO4),
+            gpio5: Some(p.GPIO5),
+            gpio6: Some(p.GPIO6),
+            gpio7: Some(p.GPIO7),
+            gpio8: Some(p.GPIO8),
+            gpio9: Some(p.GPIO9),
+            gpio10: Some(p.GPIO10),
+            gpio11: Some(p.GPIO11),
+            gpio12: Some(p.GPIO12),
+            gpio13: Some(p.GPIO13),
+            gpio14: Some(p.GPIO14),
+            gpio15: None,
+            gpio16: None,
+            gpio17: None,
+            gpio18: Some(p.GPIO18),
+            gpio19: Some(p.GPIO19),
+            gpio20: Some(p.GPIO20),
+            gpio21: None,
+            gpio33: None,
+            gpio34: None,
+            gpio35: Some(p.GPIO35),
+            gpio36: Some(p.GPIO36),
+            gpio37: Some(p.GPIO37),
+            gpio38: None,
+            gpio39: None,
+            gpio40: Some(p.GPIO40),
+            gpio41: None,
+            gpio42: Some(p.GPIO42),
+            gpio43: Some(p.GPIO43),
+            gpio44: Some(p.GPIO44),
+            gpio45: Some(p.GPIO45),
+            gpio46: Some(p.GPIO46),
+            gpio47: Some(p.GPIO47),
+            gpio48: Some(p.GPIO48),
+            dma_ch0: None,
+            dma_ch1: Some(p.DMA_CH1),
+            i2c0: Some(p.I2C0),
+            i2c1: None,
+            i2s1: Some(p.I2S1),
+            psram: Some(p.PSRAM),
+            spi2: None,
+        };
         Ok(Devices {
             board: super::BoardId::M5StackAtomS3,
             boot,
@@ -926,6 +1086,8 @@ pub mod atoms3 {
             speaker: None,
             microphone: None,
             buttons: buttons,
+            i2c: Some(i2c1),
+            free,
             spare,
         })
     }
@@ -1167,6 +1329,54 @@ pub mod stopwatch {
         };
         // /backlight (kumiki,dcs-backlight)
         let mut lcd_backlight = AnyBacklight::None;
+        // Chip resources this board leaves unused.
+        let free = super::Free {
+            gpio0: Some(p.GPIO0),
+            gpio1: None,
+            gpio2: None,
+            gpio3: Some(p.GPIO3),
+            gpio4: Some(p.GPIO4),
+            gpio5: Some(p.GPIO5),
+            gpio6: Some(p.GPIO6),
+            gpio7: Some(p.GPIO7),
+            gpio8: Some(p.GPIO8),
+            gpio9: Some(p.GPIO9),
+            gpio10: Some(p.GPIO10),
+            gpio11: Some(p.GPIO11),
+            gpio12: Some(p.GPIO12),
+            gpio13: Some(p.GPIO13),
+            gpio14: Some(p.GPIO14),
+            gpio15: Some(p.GPIO15),
+            gpio16: Some(p.GPIO16),
+            gpio17: Some(p.GPIO17),
+            gpio18: Some(p.GPIO18),
+            gpio19: Some(p.GPIO19),
+            gpio20: Some(p.GPIO20),
+            gpio21: Some(p.GPIO21),
+            gpio33: Some(p.GPIO33),
+            gpio34: Some(p.GPIO34),
+            gpio35: Some(p.GPIO35),
+            gpio36: Some(p.GPIO36),
+            gpio37: Some(p.GPIO37),
+            gpio38: Some(p.GPIO38),
+            gpio39: None,
+            gpio40: None,
+            gpio41: None,
+            gpio42: None,
+            gpio43: Some(p.GPIO43),
+            gpio44: Some(p.GPIO44),
+            gpio45: None,
+            gpio46: None,
+            gpio47: None,
+            gpio48: None,
+            dma_ch0: None,
+            dma_ch1: Some(p.DMA_CH1),
+            i2c0: Some(p.I2C0),
+            i2c1: None,
+            i2s1: Some(p.I2S1),
+            psram: None,
+            spi2: None,
+        };
         Ok(Devices {
             board: super::BoardId::M5StackStopWatch,
             boot,
@@ -1179,6 +1389,8 @@ pub mod stopwatch {
             speaker: None,
             microphone: None,
             buttons: buttons,
+            i2c: Some(i2c1),
+            free,
             spare,
         })
     }

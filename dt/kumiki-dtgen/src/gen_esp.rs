@@ -437,8 +437,112 @@ fn chosen_refs(tree: &Tree, name: &str) -> Vec<String> {
         .collect()
 }
 
+/// What the family's `Free` struct holds: the chip resources a board may
+/// leave unused, handed to the application.
+struct FreeSpec {
+    /// Chip GPIOs that can be handed out (`kumiki,io-pins` minus
+    /// `kumiki,spi-memory-pins`).
+    pins: Vec<u32>,
+    /// Pins embedded octal PSRAM may own (withheld at run time on such chips).
+    octal: Vec<u32>,
+    /// Peripheral singletons some board of the family uses (`p.X` in a
+    /// generated `init`), other than GPIOs.
+    periphs: Vec<String>,
+}
+
+/// `p.NAME` references (peripheral singletons) in generated code.
+fn peripheral_refs(code: &str) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    let bytes = code.as_bytes();
+    let mut i = 0;
+    while let Some(k) = code[i..].find("p.") {
+        let at = i + k;
+        i = at + 2;
+        if at > 0 && (bytes[at - 1].is_ascii_alphanumeric() || bytes[at - 1] == b'_') {
+            continue;
+        }
+        let name: String = code[at + 2..].chars().take_while(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || *c == '_').collect();
+        if name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            out.insert(name);
+        }
+    }
+    out
+}
+
+/// GPIO number of a `GPIOn` singleton name.
+fn gpio_number(name: &str) -> Option<u32> {
+    name.strip_prefix("GPIO").and_then(|d| d.parse().ok())
+}
+
+/// The family's [`FreeSpec`] (ESP32-S3 only): pins from the SoC GPIO node
+/// of the first board, peripherals from every board's generated `init`.
+fn free_spec(boards: &[Board], bindings: &Bindings, backend: Backend) -> Result<Option<FreeSpec>, Error> {
+    if backend != Backend::Esp32s3 || boards.is_empty() {
+        return Ok(None);
+    }
+    let (mut io, mut mem, mut octal) = (Vec::new(), Vec::new(), Vec::new());
+    boards[0].tree.root.walk("/", &mut |_, n| {
+        if n.compatible().iter().any(|c| c.ends_with("-gpio")) {
+            io = n.prop("kumiki,io-pins").map(|p| p.u32s()).unwrap_or_default();
+            mem = n.prop("kumiki,spi-memory-pins").map(|p| p.u32s()).unwrap_or_default();
+            octal = n.prop("kumiki,octal-psram-pins").map(|p| p.u32s()).unwrap_or_default();
+        }
+    });
+    if io.is_empty() {
+        return Err(Error(format!("{}: the SoC GPIO node has no kumiki,io-pins", boards[0].source.display())));
+    }
+    let mut periphs = std::collections::BTreeSet::new();
+    for b in boards {
+        let mut scratch = String::new();
+        emit_init(&mut scratch, b, bindings, backend, None)?;
+        periphs.extend(peripheral_refs(&scratch).into_iter().filter(|n| gpio_number(n).is_none()));
+    }
+    Ok(Some(FreeSpec { pins: io.into_iter().filter(|p| !mem.contains(p)).collect(), octal, periphs: periphs.into_iter().collect() }))
+}
+
+/// Emit the family's `Free` struct.
+fn emit_free_struct(out: &mut String, spec: &FreeSpec) {
+    writeln!(out, "/// Chip resources the detected board does not use, handed to the application.").unwrap();
+    writeln!(out, "/// `None`: the board uses it (or, for the octal-PSRAM pins, the chip's PSRAM does).").unwrap();
+    writeln!(out, "/// SPI flash / quad PSRAM pins are never listed.").unwrap();
+    writeln!(out, "pub struct Free {{").unwrap();
+    for p in &spec.pins {
+        writeln!(out, "    pub gpio{p}: Option<esp_hal::peripherals::GPIO{p}<'static>>,").unwrap();
+    }
+    for n in &spec.periphs {
+        writeln!(out, "    pub {}: Option<esp_hal::peripherals::{n}<'static>>,", n.to_lowercase()).unwrap();
+    }
+    writeln!(out, "}}\n\nimpl Free {{").unwrap();
+    writeln!(out, "    /// Drop the pins embedded octal PSRAM owns (call on such chips).").unwrap();
+    writeln!(out, "    pub fn withhold_octal_psram_pins(&mut self) {{").unwrap();
+    for p in spec.octal.iter().filter(|p| spec.pins.contains(p)) {
+        writeln!(out, "        self.gpio{p} = None;").unwrap();
+    }
+    writeln!(out, "    }}\n}}\n").unwrap();
+}
+
+/// The board's I²C bus handed to the application: `chosen { kumiki,i2c }`,
+/// else the only enabled I²C controller.
+fn app_i2c_bus(board: &Board, bindings: &Bindings) -> Result<Option<String>, Error> {
+    let tree = &board.tree;
+    if let Some(p) = chosen_refs(tree, "kumiki,i2c").first() {
+        return Ok(Some(label(tree, p)));
+    }
+    let mut buses = Vec::new();
+    tree.root.walk("/", &mut |p, n| {
+        if is_present(n) && p != "/" && bindings.for_node(n).and_then(|b| b.kumiki.controller.as_deref()) == Some("i2c") {
+            buses.push(p.to_string());
+        }
+    });
+    match buses.as_slice() {
+        [] => Ok(None),
+        [one] => Ok(Some(label(tree, one))),
+        _ => Err(Error(format!("{}: several I2C buses; choose one with chosen {{ kumiki,i2c = &…; }}", board.source.display()))),
+    }
+}
+
 /// Emit `pub fn init(…)` for one board (inside its module).
-fn emit_init(out: &mut String, board: &Board, bindings: &Bindings, backend: Backend) -> Result<(), Error> {
+fn emit_init(out: &mut String, board: &Board, bindings: &Bindings, backend: Backend, free: Option<&FreeSpec>) -> Result<(), Error> {
     let tree = &board.tree;
     let order = init_order(board)?;
     let path_of = |l: &str| -> String {
@@ -458,6 +562,7 @@ fn emit_init(out: &mut String, board: &Board, bindings: &Bindings, backend: Back
     writeln!(out, "        let spare = take_spare!(p);").unwrap();
     writeln!(out, "        let mut delay = {};", backend.delay_new()).unwrap();
     writeln!(out, "        // Read before anything else runs (doc/13 §4.4).\n        let boot = boot_info();").unwrap();
+    let body_start = out.len();
     let mut groups_done: Vec<String> = Vec::new();
     for l in &order {
         let path = path_of(l);
@@ -526,12 +631,33 @@ fn emit_init(out: &mut String, board: &Board, bindings: &Bindings, backend: Back
     let microphone = chosen_refs(tree, "kumiki,microphone").first().map(|p| var_of(p)).unwrap_or_else(|| "None".into());
     let backlight = class_node("backlight").map(|p| var_of(&p)).unwrap_or_else(|| "AnyBacklight::None".into());
     let buttons = class_node("buttons").map(|p| var_of(&p)).ok_or_else(|| Error(format!("{}: no buttons node", board.source.display())))?;
+    let i2c = app_i2c_bus(board, bindings)?.map(|l| format!("Some({l})")).unwrap_or_else(|| "None".into());
+    if let Some(spec) = free {
+        let refs = peripheral_refs(&out[body_start..]);
+        let mut used: Vec<u32> = chip_pins(board).into_iter().map(|(_, p)| p).collect();
+        used.extend(refs.iter().filter_map(|n| gpio_number(n)));
+        writeln!(out, "        // Chip resources this board leaves unused.").unwrap();
+        writeln!(out, "        let free = super::Free {{").unwrap();
+        for p in &spec.pins {
+            let v = if used.contains(p) { "None".to_string() } else { format!("Some(p.GPIO{p})") };
+            writeln!(out, "            gpio{p}: {v},").unwrap();
+        }
+        for n in &spec.periphs {
+            let v = if refs.contains(n) { "None".to_string() } else { format!("Some(p.{n})") };
+            writeln!(out, "            {}: {v},", n.to_lowercase()).unwrap();
+        }
+        writeln!(out, "        }};").unwrap();
+    }
     writeln!(out, "        Ok(Devices {{").unwrap();
     writeln!(out, "            board: super::BoardId::{},", variant_of(board.model())).unwrap();
     writeln!(out, "            boot,").unwrap();
     writeln!(out, "            display: {},", var_of(&display)).unwrap();
     writeln!(out, "            backlight: {backlight},\n            touch: {touch},\n            imu: {imu},\n            power: {power},\n            rtc: {rtc},\n            speaker: {speaker},\n            microphone: {microphone},").unwrap();
-    writeln!(out, "            buttons: {buttons},\n            spare,\n        }})\n    }}").unwrap();
+    writeln!(out, "            buttons: {buttons},\n            i2c: {i2c},").unwrap();
+    if free.is_some() {
+        writeln!(out, "            free,").unwrap();
+    }
+    writeln!(out, "            spare,\n        }})\n    }}").unwrap();
     Ok(())
 }
 
@@ -961,6 +1087,10 @@ pub enum PowerOff {
     );
     out.push_str(opt.backend.prelude());
     out.push('\n');
+    let free = free_spec(boards, bindings, opt.backend)?;
+    if let Some(spec) = &free {
+        emit_free_struct(&mut out, spec);
+    }
     emit_any(&mut out, boards, bindings, opt)?;
     // Board ids.
     writeln!(out, "/// Boards of this family, in detection order.").unwrap();
@@ -1104,7 +1234,7 @@ pub enum PowerOff {
             res = emit_node(&mut out, tree, path, n, binding);
         });
         res?;
-        emit_init(&mut out, b, bindings, opt.backend)?;
+        emit_init(&mut out, b, bindings, opt.backend, free.as_ref())?;
         writeln!(out, "}}\n").unwrap();
     }
     // Dispatch.

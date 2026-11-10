@@ -31,6 +31,27 @@ macro_rules! take_spare {
             cpu_ctrl: $p.CPU_CTRL,
             usb_device: $p.USB_DEVICE,
             lpwr: $p.LPWR,
+            uart0: $p.UART0,
+            uart1: $p.UART1,
+            uart2: $p.UART2,
+            spi3: $p.SPI3,
+            i2s0: $p.I2S0,
+            dma_ch2: $p.DMA_CH2,
+            dma_ch3: $p.DMA_CH3,
+            dma_ch4: $p.DMA_CH4,
+            rmt: $p.RMT,
+            ledc: $p.LEDC,
+            pcnt: $p.PCNT,
+            mcpwm0: $p.MCPWM0,
+            mcpwm1: $p.MCPWM1,
+            twai0: $p.TWAI0,
+            adc1: $p.ADC1,
+            adc2: $p.ADC2,
+            lcd_cam: $p.LCD_CAM,
+            sdhost: $p.SDHOST,
+            sha: $p.SHA,
+            aes: $p.AES,
+            rsa: $p.RSA,
         }
     };
 }
@@ -52,7 +73,7 @@ use kumiki_gfx_panels::{Co5300, DcsPanel, Gc9107, Ili9342c};
 
 pub use any::{AnyAsyncDisplay, AnyError};
 pub use generated::{
-    AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, BoardId, DetectLog,
+    AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, BoardId, DetectLog, Free,
 };
 
 /// Push-pull output (e.g. a GPIO backlight).
@@ -133,9 +154,17 @@ pub struct Devices {
     pub microphone: Option<AnyMicrophone>,
     /// Button raw-state source.
     pub buttons: ButtonInputs,
-    /// Peripherals the board definition does not use, handed back to the
+    /// The I²C bus the board devices share (DT `chosen { kumiki,i2c }`, or
+    /// the board's only bus). Add devices with `RefCellDevice::new(i2c)`;
+    /// single-core: use it from the core that runs the board devices.
+    pub i2c: Option<&'static core::cell::RefCell<I2cBus>>,
+    /// Chip GPIOs and peripheral instances this board leaves unused (only
+    /// some boards of the family use them). Pins wired to hardware the
+    /// device tree does not describe are listed too.
+    pub free: Free,
+    /// Peripherals no board of the family uses, handed back to the
     /// application (timers and software interrupts for an RTOS/executor,
-    /// radio, RNG, second core, ...).
+    /// radio, RNG, second core, UARTs, ...).
     pub spare: Spare,
 }
 
@@ -155,6 +184,27 @@ pub struct Spare {
     pub cpu_ctrl: esp_hal::peripherals::CPU_CTRL<'static>,
     pub usb_device: esp_hal::peripherals::USB_DEVICE<'static>,
     pub lpwr: esp_hal::peripherals::LPWR<'static>,
+    pub uart0: esp_hal::peripherals::UART0<'static>,
+    pub uart1: esp_hal::peripherals::UART1<'static>,
+    pub uart2: esp_hal::peripherals::UART2<'static>,
+    pub spi3: esp_hal::peripherals::SPI3<'static>,
+    pub i2s0: esp_hal::peripherals::I2S0<'static>,
+    pub dma_ch2: esp_hal::peripherals::DMA_CH2<'static>,
+    pub dma_ch3: esp_hal::peripherals::DMA_CH3<'static>,
+    pub dma_ch4: esp_hal::peripherals::DMA_CH4<'static>,
+    pub rmt: esp_hal::peripherals::RMT<'static>,
+    pub ledc: esp_hal::peripherals::LEDC<'static>,
+    pub pcnt: esp_hal::peripherals::PCNT<'static>,
+    pub mcpwm0: esp_hal::peripherals::MCPWM0<'static>,
+    pub mcpwm1: esp_hal::peripherals::MCPWM1<'static>,
+    pub twai0: esp_hal::peripherals::TWAI0<'static>,
+    pub adc1: esp_hal::peripherals::ADC1<'static>,
+    pub adc2: esp_hal::peripherals::ADC2<'static>,
+    pub lcd_cam: esp_hal::peripherals::LCD_CAM<'static>,
+    pub sdhost: esp_hal::peripherals::SDHOST<'static>,
+    pub sha: esp_hal::peripherals::SHA<'static>,
+    pub aes: esp_hal::peripherals::AES<'static>,
+    pub rsa: esp_hal::peripherals::RSA<'static>,
 }
 
 impl ButtonInputs {
@@ -211,5 +261,9 @@ pub fn init(mut p: Peripherals) -> Result<Devices, InitError> {
     // One pair of DMA buffers for whichever display the board has.
     let buf_a = dma_tx_buffer!(16384).map_err(|_| InitError::Config)?;
     let buf_b = dma_tx_buffer!(16384).map_err(|_| InitError::Config)?;
-    generated::init_board(board, p, buf_a, buf_b)
+    let mut dev = generated::init_board(board, p, buf_a, buf_b)?;
+    if octal_psram {
+        dev.free.withhold_octal_psram_pins();
+    }
+    Ok(dev)
 }

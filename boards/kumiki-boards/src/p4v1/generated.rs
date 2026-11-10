@@ -641,6 +641,7 @@ pub mod tab5 {
             speaker: speaker,
             microphone: microphone,
             buttons: buttons,
+            i2c: Some(i2c1),
             spare,
         })
     }

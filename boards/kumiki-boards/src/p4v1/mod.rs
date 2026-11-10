@@ -106,6 +106,10 @@ pub struct Devices {
     pub microphone: Option<AnyMicrophone>,
     /// Button raw-state source.
     pub buttons: ButtonInputs,
+    /// The I²C bus the board devices share (DT `chosen { kumiki,i2c }`, or
+    /// the board's only bus). Add devices with `RefCellDevice::new(i2c)`;
+    /// single-core: use it from the core that runs the board devices.
+    pub i2c: Option<&'static core::cell::RefCell<I2cBus>>,
     /// Peripherals the board definition does not use.
     pub spare: Spare,
 }

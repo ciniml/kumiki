@@ -20,6 +20,8 @@
     reg: { type: array }
     kumiki,octal-psram-pins: { type: array, description: "GPIOs owned by embedded octal PSRAM" }
     kumiki,lp-io-pins: { type: array, description: "RTC / LP IOs: powered in deep sleep, can wake the chip from it" }
+    kumiki,io-pins: { type: array, description: "GPIOs the HAL exposes (unused ones are handed to the application)" }
+    kumiki,spi-memory-pins: { type: array, description: "GPIOs the SPI flash / quad PSRAM may own: never handed to the application" }
 
 - compatible: "espressif,esp32-i2c"
   kumiki:

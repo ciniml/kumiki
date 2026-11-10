@@ -25,6 +25,9 @@ pub struct SocInfo {
     /// GPIOs that are also RTC / LP IOs (`LP_GPIOn` low-power function):
     /// powered in deep sleep, so they can wake the chip from it.
     pub lp_gpios: Vec<u32>,
+    /// GPIOs that the (quad) SPI flash or PSRAM may own: never handed to the
+    /// application.
+    pub spi_memory_pins: Vec<u32>,
     /// I²C master instances (`I2C0`, …).
     pub i2c: Vec<String>,
     /// SPI master instances usable by the application (`SPI2`, …).
@@ -73,15 +76,19 @@ pub fn parse_metadata(text: &str) -> Result<SocInfo, Error> {
     }
     for args in invocations(text, "_for_each_inner_peripheral") {
         // `@ peri_type #[doc = "…"]… GPIOn <= virtual()`
-        if !args.contains("Octal SPI PSRAM") {
+        let list = if args.contains("Octal SPI PSRAM") {
+            &mut info.octal_psram_pins
+        } else if args.contains("interfacing with SPI flash") || args.contains("interfacing with SPI PSRAM") {
+            &mut info.spi_memory_pins
+        } else {
             continue;
-        }
+        };
         if let Some(i) = args.rfind("GPIO") {
             let digits: String = args[i + 4..].chars().take_while(|c| c.is_ascii_digit()).collect();
             if let Ok(n) = digits.parse::<u32>()
-                && !info.octal_psram_pins.contains(&n)
+                && !list.contains(&n)
             {
-                info.octal_psram_pins.push(n);
+                list.push(n);
             }
         }
     }
@@ -120,6 +127,7 @@ pub fn parse_metadata(text: &str) -> Result<SocInfo, Error> {
     info.gpios.sort_unstable();
     info.octal_psram_pins.sort_unstable();
     info.lp_gpios.sort_unstable();
+    info.spi_memory_pins.sort_unstable();
     if info.gpios.is_empty() || info.i2c.is_empty() {
         return Err(Error("esp-metadata: no GPIO / I2C master entries found".into()));
     }
@@ -157,6 +165,14 @@ pub fn generate(chip: &str, info: &SocInfo, pac: &str, sources: &[String]) -> Re
     let missing: Vec<String> = (0..ngpios).filter(|n| !info.gpios.contains(n)).map(|n| n.to_string()).collect();
     if !missing.is_empty() {
         writeln!(o, "\t\t\t/* Not bonded out: {}. */", missing.join(" ")).unwrap();
+    }
+    let io: Vec<String> = info.gpios.iter().map(u32::to_string).collect();
+    writeln!(o, "\t\t\t/* Pins the HAL exposes. */").unwrap();
+    writeln!(o, "\t\t\tkumiki,io-pins = <{}>;", io.join(" ")).unwrap();
+    if !info.spi_memory_pins.is_empty() {
+        let pins: Vec<String> = info.spi_memory_pins.iter().map(u32::to_string).collect();
+        writeln!(o, "\t\t\t/* May be owned by the SPI flash / quad PSRAM: never handed to the application. */").unwrap();
+        writeln!(o, "\t\t\tkumiki,spi-memory-pins = <{}>;", pins.join(" ")).unwrap();
     }
     if !info.octal_psram_pins.is_empty() {
         let pins: Vec<String> = info.octal_psram_pins.iter().map(u32::to_string).collect();
@@ -199,6 +215,8 @@ mod tests {
         _for_each_inner_peripheral!((@ peri_type #[doc = "GPIO3 peripheral singleton"] #[doc =
         "<li>This pin may be reserved for interfacing with Octal SPI PSRAM.</li>"] GPIO3 <= virtual()));
         _for_each_inner_peripheral!((@ peri_type #[doc = "GPIO1 peripheral singleton"] GPIO1 <= virtual()));
+        _for_each_inner_peripheral!((@ peri_type #[doc = "GPIO0 peripheral singleton"] #[doc =
+        "<li>This pin may be reserved for interfacing with SPI flash.</li>"] GPIO0 <= virtual()));
         _for_each_inner_i2c_master!((0, I2C0, I2cExt0, I2CEXT0_SCL, I2CEXT0_SDA));
         _for_each_inner_i2c_master!((all(0, I2C0, I2cExt0, I2CEXT0_SCL, I2CEXT0_SDA)));
         _for_each_inner_spi_master!((SPI2)); _for_each_inner_spi_master!((SPI2, Spi2, FSPICLK[FSPICS0] [FSPID], true));
@@ -220,6 +238,7 @@ mod tests {
         assert_eq!(info.spi, vec!["SPI2"]);
         assert_eq!(info.i2s, vec!["I2S1"]);
         assert_eq!(info.lp_gpios, vec![0, 1]);
+        assert_eq!(info.spi_memory_pins, vec![0]);
         assert_eq!(pac_address(PAC, "I2C0"), Some(0x6001_3000));
         let dtsi = generate("esp32s3", &info, PAC, &[]).unwrap();
         assert!(dtsi.contains("i2c0: i2c@60013000"));
@@ -227,5 +246,7 @@ mod tests {
         assert!(dtsi.contains("Not bonded out: 2."));
         assert!(dtsi.contains("kumiki,octal-psram-pins = <3>;"));
         assert!(dtsi.contains("kumiki,lp-io-pins = <0 1>;"));
+        assert!(dtsi.contains("kumiki,io-pins = <0 1 3>;"));
+        assert!(dtsi.contains("kumiki,spi-memory-pins = <0>;"));
     }
 }

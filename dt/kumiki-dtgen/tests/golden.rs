@@ -77,6 +77,39 @@ fn generated_code_is_up_to_date() {
     }
 }
 
+/// The text of `pub mod <module>` in generated code.
+fn board_module<'a>(code: &'a str, module: &str) -> &'a str {
+    let start = code.find(&format!("\npub mod {module} {{")).unwrap();
+    let rest = &code[start + 1..];
+    &rest[..rest.find("\n}\n").unwrap()]
+}
+
+#[test]
+fn unused_resources_are_handed_to_the_application() {
+    let root = root();
+    let bindings = Bindings::load_dir(&root.join("boards/bindings")).unwrap();
+    let f = &FAMILIES[0];
+    let opt = gen_esp::Options { backend: f.backend, module_path: "$crate::esp32s3::generated".into(), source_root: root.clone() };
+    let code = gen_esp::generate(&boards(&root, f), &bindings, &opt).unwrap();
+    // Family struct: SPI flash pins are never listed; octal PSRAM pins can be withheld.
+    assert!(code.contains("pub gpio6: Option<esp_hal::peripherals::GPIO6<'static>>,"));
+    assert!(!code.contains("pub gpio26:"));
+    assert!(code.contains("self.gpio33 = None;"));
+    let cores3 = board_module(&code, "cores3");
+    // Stack-chan base servo UART pins; the internal bus pins are taken.
+    for want in ["gpio6: Some(p.GPIO6)", "gpio7: Some(p.GPIO7)", "gpio12: None", "gpio11: None", "gpio35: None"] {
+        assert!(cores3.contains(want), "cores3: {want}");
+    }
+    // CoreS3 uses I2C0, so I2C1 (Port A) is free; its bus is handed over.
+    for want in ["i2c0: None", "i2c1: Some(p.I2C1)", "spi2: None", "i2c: Some(i2c0)"] {
+        assert!(cores3.contains(want), "cores3: {want}");
+    }
+    let atoms3 = board_module(&code, "atoms3");
+    for want in ["i2c0: Some(p.I2C0)", "i2c1: None", "gpio38: None", "i2c: Some(i2c1)", "i2s1: Some(p.I2S1)"] {
+        assert!(atoms3.contains(want), "atoms3: {want}");
+    }
+}
+
 #[test]
 fn dts_compiles_with_dtc() {
     let have = |t: &str| Command::new(t).arg("--version").output().is_ok();
