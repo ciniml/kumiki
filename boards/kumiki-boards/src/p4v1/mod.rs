@@ -120,10 +120,10 @@ pub fn init(mut p: Peripherals) -> Result<Devices, InitError> {
     let board = generated::detect(&mut p, false, true).map_err(InitError::UnknownBoard)?;
     let mut dev = generated::init_board(board, p, psram)?;
     // The Tab5's ES8388 stays silent after the init the bring-up does
-    // (before the display power sequence, which it must precede) unless it
-    // is powered down and configured again once the bring-up is over:
-    // found on hardware, every SoC reset; cause unknown. `restart` does that
-    // (and nothing on speakers that need no such step).
+    // (before the display power sequence, which it must precede) unless its
+    // power is cycled afterwards (found on hardware by kumiki and tab5-os;
+    // cause unknown, see `kumiki_es8388::Es8388::power_down`). `restart` does
+    // that (and nothing on speakers that need no such step).
     if let Some(s) = dev.speaker.as_mut() {
         use kumiki_class::Speaker as _;
         let _ = s.restart();

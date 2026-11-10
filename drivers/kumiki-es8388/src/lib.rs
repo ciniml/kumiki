@@ -111,18 +111,29 @@ impl<I: I2c> Es8388<I> {
     }
 
     /// Powers the DAC and the chip down (`DACPOWER` = 0xC0, `CHIPPOWER` =
-    /// 0xFF); [`init`](Self::init) powers them up again.
+    /// 0xFF); [`power_up`](Self::power_up) restores them.
     ///
-    /// On the M5Stack Tab5 the codec can be left silent after a SoC reset
-    /// (registers all as configured; the soft reset at the start of `init`
-    /// does not help, and neither does the amplifier enable). tab5-os found
-    /// that powering down for 1 ms and calling `init` again recovers it,
-    /// but only when done some time after boot (when playback first starts),
-    /// not right after the I²S controller starts. Hence a separate call,
-    /// not part of `init`.
+    /// On the M5Stack Tab5, `init` alone leaves the codec silent whatever
+    /// state it starts from (registers all as configured; the amplifier
+    /// enable makes no difference). tab5-os found that, after `init`,
+    /// `power_down`, a 2 ms wait and [`power_up`](Self::power_up) make it
+    /// play every time (14 of 14 boots: flash, reset, reboot, reset during
+    /// playback), while `power_down` followed by `init` alternates between
+    /// playing and silent. A guess: `init` powers the DAC up before the
+    /// I²S format and clock ratio are written, and the DAC latches
+    /// something at power-up. The wait is the caller's (this crate has no
+    /// delay).
     pub fn power_down(&mut self) -> Result<(), Error<I::Error>> {
         self.write(DACPOWER, 0xC0)?;
         self.write(CHIPPOWER, 0xFF)
+    }
+
+    /// Powers the chip and the DAC up again with the values `init` uses
+    /// (`CHIPPOWER` = 0x0A, `DACPOWER` = 0x3C), without the rest of the
+    /// configuration; see [`power_down`](Self::power_down).
+    pub fn power_up(&mut self) -> Result<(), Error<I::Error>> {
+        self.write(CHIPPOWER, 0x0A)?;
+        self.write(DACPOWER, 0x3C)
     }
 
     /// DAC attenuation in 0.5 dB steps, both channels (0 = 0 dB …
@@ -190,6 +201,15 @@ mod tests {
         d.power_down().unwrap();
         let w: Vec<Vec<u8>> = d.release().0.into_iter().map(|(_, b)| b).collect();
         assert_eq!(w, [std::vec![4, 0xC0], std::vec![2, 0xFF]]);
+    }
+
+    #[test]
+    fn power_up_restores_init_values() {
+        let mut d = Es8388::new(Rec::default(), ADDR);
+        d.power_up().unwrap();
+        let w: Vec<Vec<u8>> = d.release().0.into_iter().map(|(_, b)| b).collect();
+        assert_eq!(w, [std::vec![2, 0x0A], std::vec![4, 0x3C]]);
+        assert!(INIT.contains(&(2, 0x0A)) && INIT.contains(&(4, 0x3C)));
     }
 
     #[test]

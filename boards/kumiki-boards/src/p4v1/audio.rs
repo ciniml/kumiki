@@ -75,16 +75,17 @@ impl<I: I2c> Speaker for Es8388<I> {
         Ok(())
     }
     fn restart(&mut self) -> Result<(), I::Error> {
-        // tab5-os' recovery from the silent state a SoC reset can leave:
-        // DAC and chip powered down briefly, then configured again.
-        // (Neither call has arguments to be out of range.)
+        // tab5-os' fix for the silence `init` leaves: DAC and chip powered
+        // down for 2 ms, then powered up again without `init` (power_down +
+        // init alternates between playing and silent; see
+        // `Es8388::power_down`). Neither call has arguments to be out of range.
         let i2c = |r: Result<(), kumiki_es8388::Error<I::Error>>| match r {
             Err(kumiki_es8388::Error::I2c(e)) => Err(e),
             _ => Ok(()),
         };
         i2c(self.codec.power_down())?;
         kumiki_p4v1_hal::time::delay_us(2_000);
-        i2c(self.codec.init())
+        i2c(self.codec.power_up())
     }
 }
 

@@ -256,13 +256,15 @@ fn main() -> ! {
         println!("es7210: reset write failed: {e:?}");
     }
     bulk_write(&mut i2c, ES7210, "es7210", ES7210_INIT);
-    // The ES8388 can stay silent after its init (SoC reset); powering it
-    // down briefly and configuring it again brings it back (tab5-os).
+    // The ES8388 stays silent after its init; powering it down for 2 ms and
+    // up again (without the init, which would make it alternate) brings it
+    // back (tab5-os).
     time::delay_us(100_000);
     let _ = i2c.write(ES8388, &[4, 0xC0]);
     let _ = i2c.write(ES8388, &[2, 0xFF]);
     time::delay_us(2_000);
-    bulk_write(&mut i2c, ES8388, "es8388 (again)", ES8388_INIT);
+    let _ = i2c.write(ES8388, &[2, 0x0A]);
+    let _ = i2c.write(ES8388, &[4, 0x3C]);
 
     // One period of the sine, by rotating a unit vector 7.5 degrees a step.
     let (c, s) = (0.991_444_86_f32, 0.130_526_19_f32);
