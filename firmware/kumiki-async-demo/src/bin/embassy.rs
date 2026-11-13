@@ -34,7 +34,20 @@ async fn audio_task(spk: AnySpeaker, mic: AnyMicrophone) {
 #[main]
 fn main() -> ! {
     let p = esp_hal::init(esp_hal::Config::default().with_cpu_clock(CpuClock::max()));
+    #[cfg(not(feature = "alloc"))]
     let dev = kumiki_boards::init(p).unwrap_or_else(|e| panic!("board init failed: {e:?}"));
+    // `--features alloc`: the DMA buffers come from the heap, only as many as
+    // the detected board needs, and its spare PSRAM is added to the heap.
+    #[cfg(feature = "alloc")]
+    let dev = {
+        esp_alloc::heap_allocator!(size: 72 * 1024);
+        let mut dev = kumiki_boards_alloc::init_from_heap(p).unwrap_or_else(|e| panic!("board init failed: {e:?}"));
+        if let Some(rest) = dev.psram.take() {
+            kumiki_boards_alloc::add_psram_to_heap(rest);
+        }
+        println!("{}", esp_alloc::HEAP.stats());
+        dev
+    };
     println!("kumiki-async-demo (embassy): {}", dev.board.name());
     // The board definition hands back the peripherals it does not use.
     let timg0 = TimerGroup::new(dev.spare.timg0);

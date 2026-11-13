@@ -1,0 +1,20 @@
+[package]
+name = "kumiki-boards-alloc"
+description = "Bring up a kumiki board with its DMA buffers taken from an allocator (allocator-api2), sized for the detected board; optional esp-alloc glue for the PSRAM heap"
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+authors = ["Kenta Ida <fuga@fugafuga.org>"]
+repository = "https://github.com/ciniml/kumiki"
+
+[features]
+# `init_from_heap` and `add_psram_to_heap` on esp-alloc's heap.
+esp-alloc = ["dep:esp-alloc"]
+
+[dependencies]
+kumiki-boards = { path = "../kumiki-boards", features = ["chip-esp32s3"] }
+esp-hal = { version = ">=1.2, <1.4", features = ["requires-unstable"] }
+# The trait esp-alloc implements; works on stable and on the esp toolchain
+# without feature gates (doc/15).
+allocator-api2 = { version = "0.3", default-features = false }
+esp-alloc = { version = "0.11", default-features = false, features = ["esp32s3"], optional = true }

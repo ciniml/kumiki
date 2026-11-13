@@ -18,6 +18,9 @@ required-features = ["embassy"]
 [features]
 default = ["embassy"]
 embassy = ["dep:esp-rtos", "dep:embassy-executor", "dep:static_cell"]
+# DMA buffers from esp-alloc's heap, sized for the detected board; the
+# board's spare PSRAM becomes heap too (doc/15 §3). embassy binary only.
+alloc = ["embassy", "dep:esp-alloc", "dep:kumiki-boards-alloc"]
 
 [dependencies]
 kumiki-boards = { path = "../../boards/kumiki-boards", features = ["chip-esp32s3"] }
@@ -33,3 +36,6 @@ esp-bootloader-esp-idf = { version = "0.6", features = ["esp32s3"] }
 esp-rtos = { version = "0.4", features = ["esp32s3", "embassy"], optional = true }
 embassy-executor = { version = "0.10", optional = true }
 static_cell = { version = "2", optional = true }
+# alloc variant only
+esp-alloc = { version = "0.11", features = ["esp32s3"], optional = true }
+kumiki-boards-alloc = { path = "../../boards/kumiki-boards-alloc", features = ["esp-alloc"], optional = true }

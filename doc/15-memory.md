@@ -105,6 +105,11 @@ if let Some(rest) = dev.psram.take() { kumiki_boards_alloc::add_psram_to_heap(re
 - `init_in<A: Allocator + 'static>(p, dma: A)`：`detect` → `buffer_needs` → 確保 → `init_with`。確保したバッファは手放さない。
 - バッファと descriptor は、esp-hal の DMA が届く内蔵 RAM に置く必要がある。どのアロケータを渡すかは呼び出し側が決め、esp-hal の `DmaAlignedMut::new` で置き場所と境界を確かめる。
 - `add_psram_to_heap`：PSRAM の残りを `esp_alloc::HEAP` に `External` として足す。以後 `Vec<u8, ExternalMemory>` が使える。
+  - **注意（ESP32-S3）**：PSRAM 上では atomic 命令が正しく動かない（esp-alloc の `psram_allocator!` と同じ制約）。グローバルアロケータが PSRAM から確保した領域に `Atomic*`（`Arc` の中身など）が入らないようにする。大きなバッファは `ExternalMemory` を明示して確保するのが安全。
+- `init_from_heap(p)`（feature `esp-alloc`）は `init_in(p, &esp_alloc::DmaCompatibleInternalMemory)` の短縮形。
+- 依存：kumiki-boards、esp-hal、allocator-api2 0.3（esp-alloc 0.11 と同じ版）、esp-alloc（任意）。ルートの workspace からは外し、firmware/ のビルドで使う（kumiki-boards と同じ）。
+- **確認用**：kumiki-async-demo の embassy 版に feature `alloc` を足した（`cargo build --release -p kumiki-async-demo --features alloc --bin embassy`）。72 KB のヒープからバッファを取り、PSRAM の残りをヒープに足して、ヒープの統計を表示する。
+  - `.bss` は static 版より 8.5 KB 多い（234,912 → 243,496 B）。ヒープを固定の 72 KB にしているためで、CoreS3 のバッファ（約 65 KB）を引いた残りはアプリが使える。AtomS3 ならバッファは 33 KB で、残りはもっと多い。
 
 ## 4. P4（Tab5）
 
@@ -113,7 +118,9 @@ if let Some(rest) = dev.psram.take() { kumiki_boards_alloc::add_psram_to_heap(re
 
 ## 進め方
 
-1. `kumiki.buffers` / `${buffer:…}`、`BufferNeeds`、`detect` / `init_with`、static の 1 組化、候補でないボードの除外。
-2. PSRAM ノードと `kumiki,mode`、`memory-region`、`Devices.psram`。
-3. kumiki-boards-alloc。
-4. デモでの使用例。
+1. `kumiki.buffers` / `${buffer:…}`、`BufferNeeds`、`detect` / `init_with`、static の 1 組化、候補でないボードの除外。**済**（AtomS3 だけのビルドで `.bss` 97,952 → 33,208 B、`.rwtext` 9,192 → 5,568 B。全ボードで `.bss` 97,952 → 65,688 B）
+2. PSRAM ノードと `kumiki,mode`、`memory-region`、`Devices.psram`。**済**
+3. kumiki-boards-alloc。**済**
+4. デモでの使用例。**済**（kumiki-async-demo の feature `alloc`）
+
+どれもビルドとテストまで。実機ではまだ確かめていない（PSRAM のモード指定、ヒープから取ったバッファでの表示と音声）。

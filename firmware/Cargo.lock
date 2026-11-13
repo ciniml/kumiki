@@ -1175,12 +1175,14 @@ dependencies = [
  "critical-section",
  "embassy-executor",
  "embedded-graphics",
+ "esp-alloc",
  "esp-backtrace",
  "esp-bootloader-esp-idf",
  "esp-hal",
  "esp-println",
  "esp-rtos",
  "kumiki-boards",
+ "kumiki-boards-alloc",
  "kumiki-class",
  "kumiki-gfx",
  "static_cell",
@@ -1231,6 +1233,16 @@ dependencies = [
  "kumiki-py32",
  "kumiki-rtc",
  "static_cell",
+]
+
+[[package]]
+name = "kumiki-boards-alloc"
+version = "0.1.0"
+dependencies = [
+ "allocator-api2",
+ "esp-alloc",
+ "esp-hal",
+ "kumiki-boards",
 ]
 
 [[package]]
