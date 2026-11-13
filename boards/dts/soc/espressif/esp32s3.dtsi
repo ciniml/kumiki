@@ -14,6 +14,14 @@
 	chosen {
 	};
 
+	psram: psram {
+		compatible = "espressif,esp32-psram";
+		kumiki,instance = "PSRAM";
+		/* Interface modes this chip supports (board: kumiki,mode). */
+		kumiki,modes = "quad", "octal";
+		status = "disabled";
+	};
+
 	soc {
 		#address-cells = <1>;
 		#size-cells = <1>;

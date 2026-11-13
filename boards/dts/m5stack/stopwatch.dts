@@ -121,6 +121,12 @@
 		kumiki,offset = <6 0>;
 		kumiki,rgb-order = "rgb";
 		kumiki,round-diameter = <466>;
-		kumiki,frame-buffer = "psram";
+		memory-region = <&psram>; /* frame buffer */
 	};
+};
+
+/* ESP32-S3R8: embedded octal PSRAM. */
+&psram {
+	status = "okay";
+	kumiki,mode = "octal";
 };

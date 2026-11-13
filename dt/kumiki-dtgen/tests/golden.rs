@@ -140,6 +140,44 @@ fn buffers_come_from_the_caller_sized_per_board() {
 }
 
 #[test]
+fn psram_mode_comes_from_the_dts_and_the_rest_goes_to_the_application() {
+    let root = root();
+    let bindings = Bindings::load_dir(&root.join("boards/bindings")).unwrap();
+    let f = &FAMILIES[0];
+    let opt = gen_esp::Options { backend: f.backend, module_path: "$crate::esp32s3::generated".into(), source_root: root.clone() };
+    let code = gen_esp::generate(&boards(&root, f), &bindings, &opt).unwrap();
+    let sw = board_module(&code, "stopwatch");
+    for want in [
+        "pub const MODE: &str = \"octal\";",
+        "let mut psram = bind::map_psram(p.PSRAM, psram::MODE);",
+        // The frame buffer is carved from it; the rest is handed over.
+        "let fb = bind::carve(&mut psram, w as usize * h as usize * 2)",
+        "psram: psram,",
+        "pub const NEEDS_PSRAM: bool = true;",
+        "pub const INIT_ORDER: &[&str] = &[\"psram\",",
+    ] {
+        assert!(sw.contains(want), "stopwatch: {want}");
+    }
+    let cores3 = board_module(&code, "cores3");
+    assert!(cores3.contains("pub const MODE: &str = \"quad\";") && cores3.contains("psram: None,\n"));
+    // AtomS3 declares no PSRAM: the peripheral stays free.
+    let atoms3 = board_module(&code, "atoms3");
+    assert!(atoms3.contains("psram: Some(p.PSRAM),") && !atoms3.contains("map_psram"));
+}
+
+#[test]
+fn psram_mode_must_be_one_the_chip_supports() {
+    let root = root();
+    let bindings = Bindings::load_dir(&root.join("boards/bindings")).unwrap();
+    let mut b = Board::load(&root.join("boards/dts/m5stack/stopwatch.dts"), &includes(&root)).unwrap();
+    let node = b.tree.node_mut("/psram").unwrap();
+    let mode = node.props.iter_mut().find(|p| p.name == "kumiki,mode").unwrap();
+    mode.value = vec![kumiki_dt::Value::Str("hex".into())];
+    let errs = validate(&b, &bindings);
+    assert!(errs.iter().any(|e| e.contains("kumiki,mode \"hex\" is not one of")), "{errs:#?}");
+}
+
+#[test]
 fn stackchan_base_is_an_extra_set_of_the_cores3_variant() {
     let root = root();
     let bindings = Bindings::load_dir(&root.join("boards/bindings")).unwrap();

@@ -379,6 +379,12 @@ pub fn validate(board: &Board, bindings: &Bindings) -> Vec<String> {
                 errs.push(format!("{path}: property {} not declared in binding {}", p.name, b.compatible));
             }
         }
+        // A board's PSRAM mode must be one the chip supports.
+        if let (Some(mode), Some(modes)) = (n.prop("kumiki,mode").and_then(|p| p.str()), n.prop("kumiki,modes"))
+            && !modes.strs().contains(&mode)
+        {
+            errs.push(format!("{path}: kumiki,mode {mode:?} is not one of the chip's kumiki,modes {:?}", modes.strs()));
+        }
         // GPIOs: chip pins must exist and be used once.
         let mut gpio_props: Vec<(String, &kumiki_dt::Property)> =
             n.props.iter().filter(|p| p.name == "gpios" || p.name.ends_with("-gpios")).map(|p| (p.name.clone(), p)).collect();

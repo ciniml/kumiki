@@ -140,6 +140,7 @@
     kumiki,rgb-order: { type: string, description: "rgb or bgr (default bgr)" }
     kumiki,round-diameter: { type: int, description: "visible circle diameter of a round panel" }
     kumiki,frame-buffer: { type: string, description: "draw through a RAM frame buffer (psram|internal)" }
+    memory-region: { type: phandle, description: "memory the frame buffer is carved from (the psram node)" }
 
 - compatible: "galaxycore,gc9107"
   kumiki:
@@ -156,12 +157,13 @@
   kumiki:
     bus: spi
     class: display
-    # QSPI AMOLED; x / width must be even → drawn through a PSRAM frame buffer.
+    # QSPI AMOLED; x / width must be even → drawn through a frame buffer carved
+    # from `memory-region` (the PSRAM).
     buffers: *panel-buffers
     init: |
       {
           let (w, h) = (${const:WIDTH}, ${const:HEIGHT});
-          let fb = bind::psram_frame_buffer(p.PSRAM, w as usize * h as usize * 2).ok_or(InitError::Config)?;
+          let fb = bind::carve(&mut ${var:memory-region}, w as usize * h as usize * 2).ok_or(InitError::Config)?;
           let spi = Spi::new(${instance:parent}, SpiConfig::default().with_frequency(Rate::from_hz(${const:SPI_MAX_FREQUENCY})).with_mode(Mode::_0))
               .map_err(|_| InitError::Config)?
               .with_sck(${pin:parent.sck-gpios})

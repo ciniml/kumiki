@@ -18,6 +18,8 @@ stackchan-rs（Stack-chan のファームウェア）を kumiki に移すとき�
 | `spare` | 族（ESP32-S3）のどのボードも使わないペリフェラル。タイマー、ソフトウェア割り込み、Wi-Fi、BT、RNG、2 つ目のコア、UART0/2、SPI3、I2S0、DMA_CH2〜4、RMT、LEDC、PCNT、MCPWM、TWAI、ADC、LCD_CAM、SDHOST、暗号器 | 値そのもの |
 | `free` | ボードによって使ったり使わなかったりするもの。すべての GPIO と、I2C0/1、SPI2、I2S1、UART1、DMA_CH0/1、PSRAM | `Option`。判別したボードが使うものは `None` |
 
+PSRAM は、DT で PSRAM を有効にしたボード（CoreS3、StopWatch）では kumiki が割り当て、残りを `Devices.psram` で渡す。`free.psram` が `Some` になるのは、DT に PSRAM を書いていないボードだけ（doc/15 §2）。
+
 - どちらの一覧も生成器が作る。ボードを足して使うペリフェラルが変わると、`spare` から `free` へ自動で移る。
 
 - `free` の型（`Free`）と、各ボードでの中身は生成器が作る。

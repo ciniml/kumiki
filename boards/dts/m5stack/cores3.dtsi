@@ -159,3 +159,9 @@
 		kumiki,invert;
 	};
 };
+
+/* 8 MB quad SPI PSRAM (GPIO33..37 are taken by the LCD and I2S, so not octal). */
+&psram {
+	status = "okay";
+	kumiki,mode = "quad";
+};

@@ -664,9 +664,9 @@ pub mod cores3_stackchan {
     /// Needs PSRAM (a frame buffer lives there).
     pub const NEEDS_PSRAM: bool = false;
     /// Device bring-up order (dependency graph of the device tree).
-    pub const INIT_ORDER: &[&str] = &["i2c0", "pmic", "ioexp", "touch", "imu", "rtc", "base_io", "battery", "spi2", "lcd", "i2s1", "speaker", "microphone", "uart1", "yaw", "pitch", "lcd_backlight", "buttons", "servo_power"];
+    pub const INIT_ORDER: &[&str] = &["psram", "i2c0", "pmic", "ioexp", "touch", "imu", "rtc", "base_io", "battery", "spi2", "lcd", "i2s1", "speaker", "microphone", "uart1", "yaw", "pitch", "lcd_backlight", "buttons", "servo_power"];
     /// Suspend order: `INIT_ORDER` reversed (resume in `INIT_ORDER`).
-    pub const SUSPEND_ORDER: &[&str] = &["servo_power", "buttons", "lcd_backlight", "pitch", "yaw", "uart1", "microphone", "speaker", "i2s1", "lcd", "spi2", "battery", "base_io", "rtc", "imu", "touch", "ioexp", "pmic", "i2c0"];
+    pub const SUSPEND_ORDER: &[&str] = &["servo_power", "buttons", "lcd_backlight", "pitch", "yaw", "uart1", "microphone", "speaker", "i2s1", "lcd", "spi2", "battery", "base_io", "rtc", "imu", "touch", "ioexp", "pmic", "i2c0", "psram"];
     /// Devices that can wake the chip (DT `wakeup-source`).
     pub const WAKEUP_SOURCES: &[super::WakeupSource] = &[];
     /// How the board switches itself off (DT `system-power-controller` / `gpio-poweroff`).
@@ -703,6 +703,17 @@ pub mod cores3_stackchan {
         pub uart1_rx: esp_hal::peripherals::GPIO7<'static>,
     }
 
+    /// `/psram` (espressif,esp32-psram).
+    pub mod psram {
+        #[allow(unused_imports)]
+        use super::super::Gpio;
+        pub const COMPATIBLE: &str = "espressif,esp32-psram";
+        pub const INSTANCE: &str = "PSRAM";
+        /// interface mode of this board's PSRAM (quad|octal)
+        pub const MODE: &str = "quad";
+        /// interface modes the chip supports
+        pub const MODES: &[&str] = &["quad", "octal"];
+    }
     /// `/soc/i2c@60013000` (espressif,esp32-i2c).
     pub mod i2c0 {
         #[allow(unused_imports)]
@@ -819,6 +830,8 @@ pub mod cores3_stackchan {
         pub const RGB_ORDER: Option<&str> = None;
         /// visible circle diameter of a round panel
         pub const ROUND_DIAMETER: Option<u32> = None;
+        /// memory the frame buffer is carved from (the psram node)
+        pub const MEMORY_REGION: Option<&str> = None;
         pub const POWER_SUPPLY: Option<&str> = Some("aldo3");
         pub const RESET_GPIOS: &[Gpio] = &[Gpio::Expander { controller: "ioexp", pin: 13, active_low: true }];
         pub const SPI_MAX_FREQUENCY: u32 = 40000000;
@@ -915,6 +928,8 @@ pub mod cores3_stackchan {
         let mut delay = Delay::new();
         // Read before anything else runs (doc/13 §4.4).
         let boot = boot_info();
+        // /psram (espressif,esp32-psram)
+        let mut psram = bind::map_psram(p.PSRAM, psram::MODE);
         // /soc/i2c@60013000 (espressif,esp32-i2c)
         let mut i2c0 = {
             if i2c0::BUS_RECOVERY {
@@ -1070,7 +1085,7 @@ pub mod cores3_stackchan {
             i2c0: None,
             i2c1: Some(p.I2C1),
             i2s1: None,
-            psram: Some(p.PSRAM),
+            psram: None,
             spi2: None,
             uart1: None,
         };
@@ -1123,6 +1138,7 @@ pub mod cores3_stackchan {
             buttons: buttons,
             i2c: Some(i2c0),
             extras: super::Extras::M5StackCoreS3Stackchan(Extras { base_io: base_io, servo_power: servo_power, battery: battery, uart1: uart1 }),
+            psram: psram,
             free,
             spare,
         })
@@ -1143,9 +1159,9 @@ pub mod cores3 {
     /// Needs PSRAM (a frame buffer lives there).
     pub const NEEDS_PSRAM: bool = false;
     /// Device bring-up order (dependency graph of the device tree).
-    pub const INIT_ORDER: &[&str] = &["i2c0", "pmic", "ioexp", "touch", "imu", "rtc", "spi2", "lcd", "i2s1", "speaker", "microphone", "lcd_backlight", "buttons"];
+    pub const INIT_ORDER: &[&str] = &["psram", "i2c0", "pmic", "ioexp", "touch", "imu", "rtc", "spi2", "lcd", "i2s1", "speaker", "microphone", "lcd_backlight", "buttons"];
     /// Suspend order: `INIT_ORDER` reversed (resume in `INIT_ORDER`).
-    pub const SUSPEND_ORDER: &[&str] = &["buttons", "lcd_backlight", "microphone", "speaker", "i2s1", "lcd", "spi2", "rtc", "imu", "touch", "ioexp", "pmic", "i2c0"];
+    pub const SUSPEND_ORDER: &[&str] = &["buttons", "lcd_backlight", "microphone", "speaker", "i2s1", "lcd", "spi2", "rtc", "imu", "touch", "ioexp", "pmic", "i2c0", "psram"];
     /// Devices that can wake the chip (DT `wakeup-source`).
     pub const WAKEUP_SOURCES: &[super::WakeupSource] = &[];
     /// How the board switches itself off (DT `system-power-controller` / `gpio-poweroff`).
@@ -1179,6 +1195,17 @@ pub mod cores3 {
         pub i2s1_din: esp_hal::peripherals::GPIO14<'static>,
     }
 
+    /// `/psram` (espressif,esp32-psram).
+    pub mod psram {
+        #[allow(unused_imports)]
+        use super::super::Gpio;
+        pub const COMPATIBLE: &str = "espressif,esp32-psram";
+        pub const INSTANCE: &str = "PSRAM";
+        /// interface mode of this board's PSRAM (quad|octal)
+        pub const MODE: &str = "quad";
+        /// interface modes the chip supports
+        pub const MODES: &[&str] = &["quad", "octal"];
+    }
     /// `/soc/i2c@60013000` (espressif,esp32-i2c).
     pub mod i2c0 {
         #[allow(unused_imports)]
@@ -1277,6 +1304,8 @@ pub mod cores3 {
         pub const RGB_ORDER: Option<&str> = None;
         /// visible circle diameter of a round panel
         pub const ROUND_DIAMETER: Option<u32> = None;
+        /// memory the frame buffer is carved from (the psram node)
+        pub const MEMORY_REGION: Option<&str> = None;
         pub const POWER_SUPPLY: Option<&str> = Some("aldo3");
         pub const RESET_GPIOS: &[Gpio] = &[Gpio::Expander { controller: "ioexp", pin: 13, active_low: true }];
         pub const SPI_MAX_FREQUENCY: u32 = 40000000;
@@ -1320,6 +1349,8 @@ pub mod cores3 {
         let mut delay = Delay::new();
         // Read before anything else runs (doc/13 §4.4).
         let boot = boot_info();
+        // /psram (espressif,esp32-psram)
+        let mut psram = bind::map_psram(p.PSRAM, psram::MODE);
         // /soc/i2c@60013000 (espressif,esp32-i2c)
         let mut i2c0 = {
             if i2c0::BUS_RECOVERY {
@@ -1451,7 +1482,7 @@ pub mod cores3 {
             i2c0: None,
             i2c1: Some(p.I2C1),
             i2s1: None,
-            psram: Some(p.PSRAM),
+            psram: None,
             spi2: None,
             uart1: Some(p.UART1),
         };
@@ -1504,6 +1535,7 @@ pub mod cores3 {
             buttons: buttons,
             i2c: Some(i2c0),
             extras: super::Extras::None,
+            psram: psram,
             free,
             spare,
         })
@@ -1596,6 +1628,8 @@ pub mod atoms3 {
         pub const RGB_ORDER: Option<&str> = None;
         /// visible circle diameter of a round panel
         pub const ROUND_DIAMETER: Option<u32> = None;
+        /// memory the frame buffer is carved from (the psram node)
+        pub const MEMORY_REGION: Option<&str> = None;
         pub const POWER_SUPPLY: Option<&str> = None;
         pub const RESET_GPIOS: &[Gpio] = &[Gpio::Chip { pin: 34, active_low: true }];
         pub const SPI_MAX_FREQUENCY: u32 = 40000000;
@@ -1765,6 +1799,7 @@ pub mod atoms3 {
             buttons: buttons,
             i2c: Some(i2c1),
             extras: super::Extras::None,
+            psram: None,
             free,
             spare,
         })
@@ -1785,9 +1820,9 @@ pub mod stopwatch {
     /// Needs PSRAM (a frame buffer lives there).
     pub const NEEDS_PSRAM: bool = true;
     /// Device bring-up order (dependency graph of the device tree).
-    pub const INIT_ORDER: &[&str] = &["i2c1", "pm1", "ioe1", "spi2", "buttons", "power_seq", "touch_cst820", "touch_cst9217", "imu", "lcd", "lcd_backlight"];
+    pub const INIT_ORDER: &[&str] = &["psram", "i2c1", "pm1", "ioe1", "spi2", "buttons", "power_seq", "touch_cst820", "touch_cst9217", "imu", "lcd", "lcd_backlight"];
     /// Suspend order: `INIT_ORDER` reversed (resume in `INIT_ORDER`).
-    pub const SUSPEND_ORDER: &[&str] = &["lcd_backlight", "lcd", "imu", "touch_cst9217", "touch_cst820", "power_seq", "buttons", "spi2", "ioe1", "pm1", "i2c1"];
+    pub const SUSPEND_ORDER: &[&str] = &["lcd_backlight", "lcd", "imu", "touch_cst9217", "touch_cst820", "power_seq", "buttons", "spi2", "ioe1", "pm1", "i2c1", "psram"];
     /// Devices that can wake the chip (DT `wakeup-source`).
     pub const WAKEUP_SOURCES: &[super::WakeupSource] = &[];
     /// How the board switches itself off (DT `system-power-controller` / `gpio-poweroff`).
@@ -1809,6 +1844,17 @@ pub mod stopwatch {
         pub buttons_button_b: esp_hal::peripherals::GPIO1<'static>,
     }
 
+    /// `/psram` (espressif,esp32-psram).
+    pub mod psram {
+        #[allow(unused_imports)]
+        use super::super::Gpio;
+        pub const COMPATIBLE: &str = "espressif,esp32-psram";
+        pub const INSTANCE: &str = "PSRAM";
+        /// interface mode of this board's PSRAM (quad|octal)
+        pub const MODE: &str = "octal";
+        /// interface modes the chip supports
+        pub const MODES: &[&str] = &["quad", "octal"];
+    }
     /// `/soc/i2c@60027000` (espressif,esp32-i2c).
     pub mod i2c1 {
         #[allow(unused_imports)]
@@ -1891,7 +1937,7 @@ pub mod stopwatch {
         pub const DC_GPIOS: &[Gpio] = &[];
         pub const HEIGHT: u32 = 468;
         /// draw through a RAM frame buffer (psram|internal)
-        pub const FRAME_BUFFER: Option<&str> = Some("psram");
+        pub const FRAME_BUFFER: Option<&str> = None;
         pub const INVERT: bool = false;
         /// x y offset inside controller memory
         pub const OFFSET: &[u32] = &[6, 0];
@@ -1899,6 +1945,8 @@ pub mod stopwatch {
         pub const RGB_ORDER: Option<&str> = Some("rgb");
         /// visible circle diameter of a round panel
         pub const ROUND_DIAMETER: Option<u32> = Some(466);
+        /// memory the frame buffer is carved from (the psram node)
+        pub const MEMORY_REGION: Option<&str> = Some("psram");
         pub const POWER_SUPPLY: Option<&str> = None;
         pub const RESET_GPIOS: &[Gpio] = &[];
         pub const SPI_MAX_FREQUENCY: u32 = 40000000;
@@ -1938,6 +1986,8 @@ pub mod stopwatch {
         let mut delay = Delay::new();
         // Read before anything else runs (doc/13 §4.4).
         let boot = boot_info();
+        // /psram (espressif,esp32-psram)
+        let mut psram = bind::map_psram(p.PSRAM, psram::MODE);
         // /soc/i2c@60027000 (espressif,esp32-i2c)
         let mut i2c1 = {
             if i2c1::BUS_RECOVERY {
@@ -1987,7 +2037,7 @@ pub mod stopwatch {
         // /soc/spi@60024000/display@0 (chipone,co5300)
         let mut lcd = {
             let (w, h) = (lcd::WIDTH, lcd::HEIGHT);
-            let fb = bind::psram_frame_buffer(p.PSRAM, w as usize * h as usize * 2).ok_or(InitError::Config)?;
+            let fb = bind::carve(&mut psram, w as usize * h as usize * 2).ok_or(InitError::Config)?;
             let spi = Spi::new(p.SPI2, SpiConfig::default().with_frequency(Rate::from_hz(lcd::SPI_MAX_FREQUENCY)).with_mode(Mode::_0))
                 .map_err(|_| InitError::Config)?
                 .with_sck(pins.spi2_sck)
@@ -2107,6 +2157,7 @@ pub mod stopwatch {
             buttons: buttons,
             i2c: Some(i2c1),
             extras: super::Extras::None,
+            psram: psram,
             free,
             spare,
         })

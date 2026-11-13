@@ -23,6 +23,17 @@
     kumiki,io-pins: { type: array, description: "GPIOs the HAL exposes (unused ones are handed to the application)" }
     kumiki,spi-memory-pins: { type: array, description: "GPIOs the SPI flash / quad PSRAM may own: never handed to the application" }
 
+- compatible: "espressif,esp32-psram"
+  kumiki:
+    # Maps the PSRAM in the board's mode (doc/15 §2): `Option<&'static mut [u8]>`,
+    # `None` if it did not come up. Devices carve from it (`memory-region`);
+    # the rest goes to `Devices.psram`.
+    init: "bind::map_psram(${instance}, ${const:MODE})"
+  properties:
+    kumiki,instance: { type: string, required: true }
+    kumiki,modes: { type: string-array, description: "interface modes the chip supports" }
+    kumiki,mode: { type: string, required: true, description: "interface mode of this board's PSRAM (quad|octal)" }
+
 - compatible: "espressif,esp32-uart"
   kumiki:
     controller: uart

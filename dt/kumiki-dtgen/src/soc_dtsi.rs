@@ -36,6 +36,9 @@ pub struct SocInfo {
     pub i2s: Vec<String>,
     /// UART instances (`UART0`, …).
     pub uart: Vec<String>,
+    /// PSRAM interface modes the chip supports (`quad`, `octal`, `hex`);
+    /// empty: no PSRAM controller.
+    pub psram_modes: Vec<String>,
 }
 
 /// Arguments of every `<name>!((…))` invocation in `text` (the part inside
@@ -133,6 +136,17 @@ pub fn parse_metadata(text: &str) -> Result<SocInfo, Error> {
             info.uart.push(f[1].to_string());
         }
     }
+    // The PSRAM singleton, and which wide modes the chip's driver has
+    // (`("psram.octal_spi") => { true };` properties); quad SPI is always there.
+    if text.contains("PSRAM <= virtual()") {
+        info.psram_modes.push("quad".into());
+        for (sym, mode) in [("(\"psram.octal_spi\") =>", "octal"), ("(\"psram.hex_spi\") =>", "hex")] {
+            let on = text.find(sym).is_some_and(|i| text[i + sym.len()..].trim_start().trim_start_matches('{').trim_start().starts_with("true"));
+            if on {
+                info.psram_modes.push(mode.into());
+            }
+        }
+    }
     info.gpios.sort_unstable();
     info.octal_psram_pins.sort_unstable();
     info.lp_gpios.sort_unstable();
@@ -166,6 +180,14 @@ pub fn generate(chip: &str, info: &SocInfo, pac: &str, sources: &[String]) -> Re
     writeln!(o, " * Do not edit by hand.\n */\n").unwrap();
     writeln!(o, "/ {{\n\t#address-cells = <1>;\n\t#size-cells = <1>;\n\tcompatible = \"espressif,{chip}\";\n").unwrap();
     writeln!(o, "\tchosen {{\n\t}};\n").unwrap();
+    if !info.psram_modes.is_empty() {
+        // Off-chip memory, not a bus device: a board with PSRAM enables it and
+        // states the mode (doc/15 §2).
+        let modes: Vec<String> = info.psram_modes.iter().map(|m| format!("\"{m}\"")).collect();
+        writeln!(o, "\tpsram: psram {{\n\t\tcompatible = \"espressif,esp32-psram\";\n\t\tkumiki,instance = \"PSRAM\";").unwrap();
+        writeln!(o, "\t\t/* Interface modes this chip supports (board: kumiki,mode). */\n\t\tkumiki,modes = {};", modes.join(", ")).unwrap();
+        writeln!(o, "\t\tstatus = \"disabled\";\n\t}};\n").unwrap();
+    }
     writeln!(o, "\tsoc {{\n\t\t#address-cells = <1>;\n\t\t#size-cells = <1>;\n\t\tcompatible = \"simple-bus\";\n\t\tranges;").unwrap();
     let gpio = addr("GPIO")?;
     let ngpios = info.gpios.last().map(|n| n + 1).unwrap_or(0);
@@ -238,6 +260,13 @@ mod tests {
         _for_each_inner_lp_function!((LP_GPIO1, GPIO1, _0)); _for_each_inner_lp_function!((SAR_I2C_SDA_0, GPIO1, _3));
         _for_each_inner_lp_function!((LP_GPIO0, GPIO0, _0));
         _for_each_inner_uart!((1, UART1, Uart1, U1RXD, U1TXD)); _for_each_inner_uart!((all(1, UART1, Uart1, U1RXD, U1TXD)));
+        _for_each_inner_peripheral!((@ peri_type #[doc = "PSRAM peripheral singleton"] PSRAM <= virtual()));
+        ("psram.octal_spi") => {
+            true
+        };
+        ("psram.hex_spi") => {
+            false
+        };
     "#;
     const PAC: &str = "pub type GPIO = crate::Periph<gpio::RegisterBlock, 0x6000_4000>;\n\
         pub type I2C0 = crate::Periph<i2c0::RegisterBlock, 0x6001_3000>;\n\
@@ -256,6 +285,7 @@ mod tests {
         assert_eq!(info.lp_gpios, vec![0, 1]);
         assert_eq!(info.spi_memory_pins, vec![0]);
         assert_eq!(info.uart, vec!["UART1"]);
+        assert_eq!(info.psram_modes, vec!["quad", "octal"]);
         assert_eq!(pac_address(PAC, "I2C0"), Some(0x6001_3000));
         let dtsi = generate("esp32s3", &info, PAC, &[]).unwrap();
         assert!(dtsi.contains("i2c0: i2c@60013000"));
@@ -266,5 +296,7 @@ mod tests {
         assert!(dtsi.contains("kumiki,io-pins = <0 1 3>;"));
         assert!(dtsi.contains("kumiki,spi-memory-pins = <0>;"));
         assert!(dtsi.contains("uart1: serial@60010000 {\n\t\t\tcompatible = \"espressif,esp32-uart\";"));
+        assert!(dtsi.contains("psram: psram {\n\t\tcompatible = \"espressif,esp32-psram\";"));
+        assert!(dtsi.contains("kumiki,modes = \"quad\", \"octal\";"));
     }
 }

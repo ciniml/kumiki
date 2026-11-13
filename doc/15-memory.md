@@ -87,6 +87,11 @@ let dev = kumiki_boards::init_with(p, board, bufs)?;
 - PSRAM にフレームバッファを置く表示は、`memory-region = <&psram>` で PSRAM ノードを指す（標準のプロパティ）。生成器はこれを依存関係として扱い、PSRAM を先に割り当てる。
 - 表示などが切り出した残りは `Devices.psram: Option<&'static mut [u8]>` でアプリに渡す。
 - DT で PSRAM を有効にしていないボードでは、`Devices.free.psram`（ペリフェラルそのもの）が `Some` のまま残る。アプリが自分で設定できる。
+- 書いたボード：CoreS3（とその変種）は `quad`、StopWatch は `octal`。AtomS3 は PSRAM を持たない。
+- **測った結果**（kumiki-demo、`board-*` で 1 ボードに絞ったビルド）：
+  - **モードを決めても、もう一方のドライバは IRAM から消えない**。StopWatch の `.rwtext` は 9,032 B で変わらなかった。esp-hal 1.2 は、モードを実行時の値として 1 つの IRAM の関数の中で振り分けるので、使わない側もリンクされる。消すには esp-hal 側の変更（モードを型や feature で選ぶ）が要る。DT で決める利点は、`Auto` の判別（octal を試してから quad）をしないことにとどまる。
+  - CoreS3 は、kumiki が PSRAM を割り当てるようになったので、`.rwtext` が 5,568 → 9,032 B に増えた（PSRAM の初期化コードは IRAM に置かれる）。PSRAM を使うアプリなら、もともと払っていた分。
+- **CoreS3 の変更点**：これまで `Devices.free.psram` で受け取っていた PSRAM は、`Devices.psram`（割り当て済みの領域）で受け取る。`esp_alloc::psram_allocator!` を使っていたアプリは、`kumiki_boards_alloc::add_psram_to_heap(dev.psram.take().unwrap())` などに置き換える（§3）。
 
 ## 3. kumiki-boards-alloc（alloc に依存するのはここだけ）
 

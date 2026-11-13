@@ -668,6 +668,17 @@ fn buffer_needs(board: &Board, bindings: &Bindings, backend: Backend) -> Result<
     Ok(Some(format!("BufferNeeds {{ {} }}", fields.join(", "))))
 }
 
+/// Path of the board's enabled PSRAM node, if any.
+fn psram_node(board: &Board) -> Option<String> {
+    let mut found = None;
+    board.tree.root.walk("/", &mut |p, n| {
+        if found.is_none() && is_present(n) && n.compatible().contains(&"espressif,esp32-psram") {
+            found = Some(p.to_string());
+        }
+    });
+    found
+}
+
 /// Emit `pub fn init(…)` for one board (inside its module).
 fn emit_init(out: &mut String, board: &Board, bindings: &Bindings, backend: Backend, free: Option<&FreeSpec>) -> Result<(), Error> {
     let tree = &board.tree;
@@ -795,6 +806,11 @@ fn emit_init(out: &mut String, board: &Board, bindings: &Bindings, backend: Back
     writeln!(out, "            display: {},", var_of(&display)).unwrap();
     writeln!(out, "            backlight: {backlight},\n            touch: {touch},\n            imu: {imu},\n            power: {power},\n            rtc: {rtc},\n            speaker: {speaker},\n            microphone: {microphone},").unwrap();
     writeln!(out, "            buttons: {buttons},\n            i2c: {i2c},\n            extras: {extras_expr},").unwrap();
+    if backend == Backend::Esp32s3 {
+        // What the devices left of the board's PSRAM (doc/15 §2).
+        let psram = psram_node(board).map(|p| label(tree, &p)).unwrap_or_else(|| "None".into());
+        writeln!(out, "            psram: {psram},").unwrap();
+    }
     if free.is_some() {
         writeln!(out, "            free,").unwrap();
     }
@@ -1330,9 +1346,13 @@ pub enum PowerOff {
             v
         };
         let uses_octal = pins.iter().any(|(_, pin)| octal.contains(pin));
+        // A device lives in PSRAM (`memory-region = <&psram>`, or the older
+        // `kumiki,frame-buffer = "psram"`): no PSRAM, not this board.
+        let psram = psram_node(b);
         let mut needs_psram = false;
         tree.root.walk("/", &mut |_, n| {
-            if is_present(n) && n.prop("kumiki,frame-buffer").and_then(|p| p.str()) == Some("psram") {
+            let in_psram = n.prop("memory-region").and_then(|p| phandle_target(tree, p)).is_some_and(|t| Some(t) == psram);
+            if is_present(n) && (in_psram || n.prop("kumiki,frame-buffer").and_then(|p| p.str()) == Some("psram")) {
                 needs_psram = true;
             }
         });

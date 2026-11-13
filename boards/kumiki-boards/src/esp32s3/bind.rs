@@ -36,12 +36,31 @@ pub fn hz(v: Option<u32>, default: u32) -> Rate {
     Rate::from_hz(v.unwrap_or(default))
 }
 
-/// Map PSRAM and carve a `len`-byte frame buffer from its start.
-/// The mapping is kept for the program's lifetime.
-pub fn psram_frame_buffer(psram: esp_hal::peripherals::PSRAM<'static>, len: usize) -> Option<&'static mut [u8]> {
-    let psram = esp_hal::psram::Psram::new(psram, esp_hal::psram::PsramConfig::default());
+/// Bring PSRAM up in the board's DT mode (`kumiki,mode`: `quad` / `octal`)
+/// and map all of it for the program's lifetime. `None`: it did not answer.
+pub fn map_psram(psram: esp_hal::peripherals::PSRAM<'static>, mode: &str) -> Option<&'static mut [u8]> {
+    use esp_hal::psram::{Psram, PsramConfig, PsramMode};
+    let mode = match mode {
+        "quad" => PsramMode::QuadSpi,
+        "octal" => PsramMode::OctalSpi,
+        _ => PsramMode::Auto, // not reached: dtgen checks the mode
+    };
+    let psram = Psram::new(psram, PsramConfig { mode, ..PsramConfig::default() });
     let (ptr, size) = psram.raw_parts();
     core::mem::forget(psram);
-    // SAFETY: PSRAM is mapped for the program's lifetime and handed out once.
-    (size >= len).then(|| unsafe { core::slice::from_raw_parts_mut(ptr, len) })
+    // SAFETY: mapped for the program's lifetime; handed out once, here.
+    (size > 0).then(|| unsafe { core::slice::from_raw_parts_mut(ptr, size) })
+}
+
+/// Take `len` bytes from the start of `region`, leaving the rest in it
+/// (`None` once nothing is left). `None` if it is missing or too small.
+pub fn carve(region: &mut Option<&'static mut [u8]>, len: usize) -> Option<&'static mut [u8]> {
+    let r = region.take()?;
+    if r.len() < len {
+        *region = Some(r);
+        return None;
+    }
+    let (head, rest) = r.split_at_mut(len);
+    *region = (!rest.is_empty()).then_some(rest);
+    Some(head)
 }

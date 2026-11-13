@@ -181,6 +181,11 @@ pub struct Devices {
     /// Board-specific devices (DT `chosen { kumiki,extras }`), e.g. an
     /// add-on base's expander, supplies and buses.
     pub extras: Extras,
+    /// The board's PSRAM (DT `psram` node, mapped in its `kumiki,mode`) less
+    /// what the devices carved out (a frame buffer). `None` if the board
+    /// declares none or it did not come up; then `free.psram` may hold the
+    /// peripheral. Hand it to a heap (`kumiki-boards-alloc`) or use it as is.
+    pub psram: Option<&'static mut [u8]>,
 }
 
 impl ButtonInputs {
