@@ -32,6 +32,4 @@ embedded-graphics = "0.8"
 embedded-hal = "1.0"
 embedded-hal-async = "1.0"
 kumiki-gfx = { path = "gfx/kumiki-gfx" }
-kumiki-gfx-panels = { path = "gfx/kumiki-gfx-panels" }
-kumiki-gfx-bus-ehal = { path = "gfx/kumiki-gfx-bus-ehal" }
 kumiki-class = { path = "dt/kumiki-class" }

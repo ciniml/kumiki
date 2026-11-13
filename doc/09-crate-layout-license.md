@@ -42,7 +42,8 @@
 
 | クレート | embedded-hal | HAL | 非同期ランタイム | alloc |
 |---|---|---|---|---|
-| kumiki-gfx / kumiki-gfx-panels | トレイトだけ（`DelayNs`, `OutputPin`） | × | × | 任意（`alloc` feature で Vec ベースのスプライト） |
+| kumiki-gfx / kumiki-gfx-panels | トレイトだけ（`DelayNs`, `OutputPin`） | × | × | ×（スプライトのバッファ型は呼び出し側が決めるので、`Vec<u8, A>` も渡せる。doc/15） |
+| kumiki-boards-alloc | – | esp-hal、esp-alloc（任意） | × | ✓（allocator-api2。起動時の確保だけ） |
 | kumiki-gfx-bus-ehal | ✓（1.0 と async） | × | × | × |
 | kumiki-gfx-bus-esp | ✓ | esp-hal（`requires-unstable`、チップごとの feature） | × | × |
 | kumiki-class / kumiki-dt-runtime | トレイトだけ | × | ×（`embassy-sync` は executor に依存しない） | × |
@@ -60,7 +61,7 @@
 
 - すべてのランタイムクレートは `#![no_std]` にする。
 - **alloc がなくても使えることを必須にする。** バッファは `&'static mut [u8]`（`StaticCell` など）で渡せるようにする。
-- `alloc` feature を有効にすると、PSRAM や内部 RAM の DMA 可能な領域から確保できるようにする。esp-alloc のメモリ種別ごとのアロケータに対応させることを検討する（esp-alloc が `allocator_api2` に対応しているかは実装前に確かめる。現時点では未確認）。
+- ~~`alloc` feature を有効にすると、PSRAM や内部 RAM の DMA 可能な領域から確保できるようにする。~~ → doc/15 で変更：feature ではなく別クレート（`kumiki-boards-alloc`）に分ける。esp-alloc 0.11 は allocator-api2 の `Allocator` を実装していることを確かめた。
 - 大きなバッファは Wi-Fi を起動する前に確保することを、BSP の初期化 API の形で促す（[02](02-local-assets.md) の教訓 4）。
 
 ## 4. ツールチェイン

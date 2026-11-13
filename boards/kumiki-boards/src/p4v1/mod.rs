@@ -46,6 +46,8 @@ pub type SharedI2c = RefCellDevice<'static, I2cBus>;
 pub enum InitError {
     /// No candidate board matched; what each probe read.
     UnknownBoard(DetectLog),
+    /// The board is not a detection candidate of this build (`board-*` features).
+    NotCandidate(BoardId),
     /// PSRAM bring-up failed.
     Psram(&'static str),
     /// A peripheral could not be configured.

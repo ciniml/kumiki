@@ -120,6 +120,26 @@ fn unused_resources_are_handed_to_the_application() {
 }
 
 #[test]
+fn buffers_come_from_the_caller_sized_per_board() {
+    let root = root();
+    let bindings = Bindings::load_dir(&root.join("boards/bindings")).unwrap();
+    let f = &FAMILIES[0];
+    let opt = gen_esp::Options { backend: f.backend, module_path: "$crate::esp32s3::generated".into(), source_root: root.clone() };
+    let code = gen_esp::generate(&boards(&root, f), &bindings, &opt).unwrap();
+    // No DMA buffer statics in the generated bring-up.
+    assert!(!code.contains("dma_tx_stream_buffer!") && !code.contains("dma_rx_stream_buffer!"));
+    assert!(board_module(&code, "cores3").contains(
+        "pub const BUFFERS: BufferNeeds = BufferNeeds { display: 16384, i2s_tx: (16000, 4000), i2s_rx: (16000, 1000) };"
+    ));
+    let atoms3 = board_module(&code, "atoms3");
+    assert!(atoms3.contains("pub const BUFFERS: BufferNeeds = BufferNeeds { display: 16384, i2s_tx: (0, 0), i2s_rx: (0, 0) };"));
+    assert!(atoms3.contains("let (buf_a, buf_b) = bufs.display.take().ok_or(InitError::MissingBuffer(\"display\"))?;"));
+    // Only detection candidates are linked in.
+    assert!(code.contains("BoardId::M5StackAtomS3 if atoms3::CANDIDATE => atoms3::init(p, bufs),"));
+    assert!(code.contains("let m = if atoms3::CANDIDATE { m.max(atoms3::BUFFERS) } else { m };"));
+}
+
+#[test]
 fn stackchan_base_is_an_extra_set_of_the_cores3_variant() {
     let root = root();
     let bindings = Bindings::load_dir(&root.join("boards/bindings")).unwrap();

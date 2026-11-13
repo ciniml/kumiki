@@ -77,14 +77,22 @@ impl Backend {
     /// Extra arguments of the generated `init` (after `p`): parameters, call.
     fn init_args(self) -> (&'static str, &'static str) {
         match self {
-            Backend::Esp32s3 => (", buf_a: DmaTxBuf, buf_b: DmaTxBuf", ", buf_a, buf_b"),
+            Backend::Esp32s3 => (", mut bufs: Buffers", ", bufs"),
             Backend::P4v1 => (", psram: (usize, usize)", ", psram"),
         }
     }
     fn init_args_dispatch(self) -> &'static str {
         match self {
-            Backend::Esp32s3 => ", buf_a: prelude::DmaTxBuf, buf_b: prelude::DmaTxBuf",
+            Backend::Esp32s3 => ", bufs: prelude::Buffers",
             Backend::P4v1 => ", psram: (usize, usize)",
+        }
+    }
+    /// Buffers the caller supplies (`kumiki.buffers` names) and how many
+    /// sizes each takes; empty: the backend's templates allocate their own.
+    fn buffer_kinds(self) -> &'static [(&'static str, usize)] {
+        match self {
+            Backend::Esp32s3 => &[("display", 1), ("i2s-tx", 2), ("i2s-rx", 2)],
+            Backend::P4v1 => &[],
         }
     }
     fn delay_new(self) -> &'static str {
@@ -116,7 +124,6 @@ const PRELUDE: &str = r#"mod prelude {
     pub use embedded_hal_bus::i2c::RefCellDevice;
     pub use esp_hal::{
         delay::Delay,
-        dma::DmaTxBuf,
         gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
         i2c::master::{Config as I2cConfig, I2c},
         i2s::master::{Channels, DataFormat, I2s, TdmConfig},
@@ -130,8 +137,8 @@ const PRELUDE: &str = r#"mod prelude {
     pub use kumiki_mpu6886::Mpu6886;
     pub use static_cell::StaticCell;
     pub use super::super::{
-        audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs,
-        boot_info, Devices, I2cBus, InitError, SharedI2c,
+        audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, BufferNeeds,
+        Buffers, ButtonInputs, boot_info, Devices, I2cBus, InitError, SharedI2c,
     };
 }
 "#;
@@ -332,6 +339,16 @@ impl Ctx<'_> {
                     }
                     None => return Err(self.err(format!("{arg} is empty"))),
                 }
+            }
+            // A caller-supplied buffer (`Buffers` field), declared in the binding.
+            "buffer" => {
+                if !self.backend.buffer_kinds().iter().any(|(k, _)| *k == arg) {
+                    return Err(self.err(format!("${{buffer:{arg}}}: not a buffer kind of {}", self.backend.key())));
+                }
+                if !binding.kumiki.buffers.contains_key(arg) {
+                    return Err(self.err(format!("${{buffer:{arg}}}: binding {} does not declare it in kumiki.buffers", binding.compatible)));
+                }
+                format!("bufs.{}.take().ok_or(InitError::MissingBuffer({arg:?}))?", ident_lower(arg))
             }
             // The use count of this node's supply (`rails::LABEL`).
             "rail" => format!("rails::{}", ident_upper(&my_label)),
@@ -607,6 +624,48 @@ fn app_i2c_bus(board: &Board, bindings: &Bindings) -> Result<Option<String>, Err
         [one] => Ok(Some(label(tree, one))),
         _ => Err(Error(format!("{}: several I2C buses; choose one with chosen {{ kumiki,i2c = &…; }}", board.source.display()))),
     }
+}
+
+/// The `BufferNeeds` expression of one board: per buffer kind of the backend,
+/// the element-wise largest default size among the enabled nodes' bindings
+/// (zero when no node uses it). `None`: the backend takes no buffers.
+fn buffer_needs(board: &Board, bindings: &Bindings, backend: Backend) -> Result<Option<String>, Error> {
+    let kinds = backend.buffer_kinds();
+    if kinds.is_empty() {
+        return Ok(None);
+    }
+    let mut need: Vec<Vec<u32>> = kinds.iter().map(|(_, n)| vec![0; *n]).collect();
+    let mut err = None;
+    board.tree.root.walk("/", &mut |path, n| {
+        if err.is_some() || path == "/" || !is_present(n) {
+            return;
+        }
+        let Some(b) = bindings.for_node(n) else { return };
+        for (name, sizes) in &b.kumiki.buffers {
+            match kinds.iter().position(|(k, _)| k == name) {
+                Some(i) if sizes.len() == kinds[i].1 => {
+                    for (have, want) in need[i].iter_mut().zip(sizes) {
+                        *have = (*have).max(*want);
+                    }
+                }
+                Some(i) => err = Some(Error(format!("binding {}: buffer {name} takes {} sizes", b.compatible, kinds[i].1))),
+                None => err = Some(Error(format!("binding {}: unknown buffer kind {name}", b.compatible))),
+            }
+        }
+    });
+    if let Some(e) = err {
+        return Err(e);
+    }
+    let fields: Vec<String> = kinds
+        .iter()
+        .zip(&need)
+        .map(|((k, _), v)| {
+            let v: Vec<String> = v.iter().map(u32::to_string).collect();
+            let v = if v.len() == 1 { v[0].clone() } else { format!("({})", v.join(", ")) };
+            format!("{}: {v}", ident_lower(k))
+        })
+        .collect();
+    Ok(Some(format!("BufferNeeds {{ {} }}", fields.join(", "))))
 }
 
 /// Emit `pub fn init(…)` for one board (inside its module).
@@ -1212,6 +1271,20 @@ pub enum PowerOff {
     writeln!(out, "        }}\n    }}\n}}\n").unwrap();
     let feats: Vec<String> = boards.iter().map(|b| format!("feature = {:?}", feature_of(b))).collect();
     writeln!(out, "/// Some `board-*` feature pins the candidate set.\nconst ANY_PINNED: bool = cfg!(any({}));\n", feats.join(", ")).unwrap();
+    if !opt.backend.buffer_kinds().is_empty() {
+        writeln!(out, "/// Buffers board `id` takes from `Buffers` (default sizes, doc/15 §1).").unwrap();
+        writeln!(out, "pub const fn buffer_needs(id: BoardId) -> prelude::BufferNeeds {{\n    match id {{").unwrap();
+        for b in boards {
+            writeln!(out, "        BoardId::{} => {}::BUFFERS,", variant_of(b.model()), b.module).unwrap();
+        }
+        writeln!(out, "    }}\n}}\n").unwrap();
+        writeln!(out, "/// The largest buffers any detection candidate takes.").unwrap();
+        writeln!(out, "pub const MAX_BUFFERS: prelude::BufferNeeds = {{\n    let m = prelude::BufferNeeds::NONE;").unwrap();
+        for b in boards {
+            writeln!(out, "    let m = if {0}::CANDIDATE {{ m.max({0}::BUFFERS) }} else {{ m }};", b.module).unwrap();
+        }
+        writeln!(out, "    m\n}};\n").unwrap();
+    }
 
     // detect()
     out.push_str(
@@ -1309,6 +1382,10 @@ pub enum PowerOff {
         };
         writeln!(out, "    /// How the board switches itself off (DT `system-power-controller` / `gpio-poweroff`).").unwrap();
         writeln!(out, "    pub const POWER_OFF: Option<super::PowerOff> = {poff};").unwrap();
+        if let Some(needs) = buffer_needs(b, bindings, opt.backend)? {
+            writeln!(out, "    /// Buffers the board's devices take from `Buffers` (default sizes, doc/15 §1).").unwrap();
+            writeln!(out, "    pub const BUFFERS: BufferNeeds = {needs};").unwrap();
+        }
         let rails = crate::rails(b);
         if !rails.is_empty() {
             writeln!(out, "\n    /// Use counts of the board's regulators (DT `regulators`), shared by their `Rail` handles.").unwrap();
@@ -1350,7 +1427,8 @@ pub enum PowerOff {
         writeln!(out, "}}\n").unwrap();
     }
     // Dispatch.
-    writeln!(out, "/// Bring up the detected board.").unwrap();
+    writeln!(out, "/// Bring up the detected board. Only detection candidates are linked in (a").unwrap();
+    writeln!(out, "/// `board-*` feature leaves the other boards' bring-up out of the binary).").unwrap();
     writeln!(
         out,
         "pub fn init_board(id: BoardId, p: Peripherals{}) -> Result<prelude::Devices, prelude::InitError> {{\n    match id {{",
@@ -1358,8 +1436,9 @@ pub enum PowerOff {
     )
     .unwrap();
     for b in boards {
-        writeln!(out, "        BoardId::{} => {}::init(p{}),", variant_of(b.model()), b.module, opt.backend.init_args().1).unwrap();
+        writeln!(out, "        BoardId::{} if {1}::CANDIDATE => {1}::init(p{2}),", variant_of(b.model()), b.module, opt.backend.init_args().1).unwrap();
     }
+    writeln!(out, "        id => Err(prelude::InitError::NotCandidate(id)),").unwrap();
     writeln!(out, "    }}\n}}").unwrap();
     // Trim the final blank line for a stable file ending.
     while out.ends_with("\n\n") {

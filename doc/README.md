@@ -32,6 +32,7 @@
 | 12 | [M4: Tab5 の計画と記録](12-m4-tab5-plan.md) | P4 v1 の HAL、表示、I2S とコーデック、実機で分かったこと |
 | 13 | [電源管理の設計（検討）](13-design-power.md) | 現状、Linux・Zephyr・RTOS の調査、参照カウントとガードによる方針、段階分け |
 | 14 | [アプリに渡す資源と追加ボード](14-app-resources.md) | 使わないピン・ペリフェラル（`free` / `spare`）、共有 I²C、非同期の音声、Stack-chan の台座 |
+| 15 | [バッファとメモリ](15-memory.md) | DMA バッファを呼び出し側から渡す、PSRAM を DTS で決める、Allocator API を使う別クレート |
 
 ## 結論の要約
 

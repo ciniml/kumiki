@@ -131,6 +131,11 @@ pub struct KumikiMeta {
     /// Backend-specific `type` (like `init-for`).
     #[serde(default, rename = "type-for")]
     pub ty_for: BTreeMap<String, String>,
+    /// Buffers the `init` template takes with `${buffer:NAME}`: name → default
+    /// sizes (`display: [bytes]`, `i2s-tx: [bytes, chunk]`). The caller
+    /// supplies them (doc/15 §1); the generator sums up what a board needs.
+    #[serde(default)]
+    pub buffers: BTreeMap<String, Vec<u32>>,
 }
 
 /// One binding.

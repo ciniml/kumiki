@@ -103,6 +103,8 @@
   kumiki:
     bus: spi
     class: display
+    # Two DMA buffers for the panel bus (bytes each), supplied by the caller (doc/15 §1).
+    buffers: &panel-buffers { display: [16384] }
     init: &spi-dcs-init |
       {
           ${reset}
@@ -113,6 +115,7 @@
               .with_dma(p.DMA_CH0);
           let dc = Output::new(${pin:dc-gpios}, Level::High, OutputConfig::default());
           let cs = Output::new(${pin:parent.cs-gpios}, Level::High, OutputConfig::default());
+          let (buf_a, buf_b) = ${buffer:display};
           let bus = EspSpiDmaBus::new(spi, dc, Some(cs), buf_a, buf_b).with_fifo(${spihost});
           let mut panel = DcsPanel::new(bus, ${model}, ${dcs_config}, None::<NoPin>);
           panel.init(&mut delay).map_err(|_| InitError::Display)?;
@@ -142,6 +145,7 @@
   kumiki:
     bus: spi
     class: display
+    buffers: *panel-buffers
     init: *spi-dcs-init
     model: "kumiki_gfx_panels::Gc9107"
     variant: Gc9107
@@ -153,6 +157,7 @@
     bus: spi
     class: display
     # QSPI AMOLED; x / width must be even → drawn through a PSRAM frame buffer.
+    buffers: *panel-buffers
     init: |
       {
           let (w, h) = (${const:WIDTH}, ${const:HEIGHT});
@@ -166,6 +171,7 @@
               .with_sio2(${pin:parent.sio-gpios[2]})
               .with_sio3(${pin:parent.sio-gpios[3]})
               .with_dma(p.DMA_CH0);
+          let (buf_a, buf_b) = ${buffer:display};
           let bus = EspQspiDmaBus::new(spi, buf_a, buf_b);
           let mut panel = DcsPanel::new(bus, ${model}, ${dcs_config}, None::<NoPin>);
           panel.init(&mut delay).map_err(|_| InitError::Display)?;
@@ -260,11 +266,12 @@
     bus: i2c
     class: speaker
     # Takes the TX side of its I2S controller.
+    # Ring of 16 000 bytes in 4 descriptors.
+    buffers: { i2s-tx: [16000, 4000] }
     init: |
       {
           let tx = ${var:i2s}.tx.take().ok_or(InitError::Config)?;
-          let buf = esp_hal::dma_tx_stream_buffer!(16_000, 4_000);
-          let out = audio::I2sOut::new(tx, buf, ${var:i2s}.rate).ok_or(InitError::Config)?;
+          let out = audio::I2sOut::new(tx, ${buffer:i2s-tx}, ${var:i2s}.rate).ok_or(InitError::Config)?;
           audio::Aw88298::new(RefCellDevice::new(${bus}), ${const:ADDR}, out).ok().map(AnySpeaker::${variant})
       }
     variant: Aw88298
@@ -278,13 +285,13 @@
     bus: i2c
     class: microphone
     # Takes the RX side of its I2S controller (MCLK from it).
+    # Many small descriptors: consumed ones are relinked at the tail, and the
+    # DMA reads ahead, so a few would leave it no room (it stops when full).
+    buffers: { i2s-rx: [16000, 1000] }
     init: |
       {
           let rx = ${var:i2s}.rx.take().ok_or(InitError::Config)?;
-          // Many small descriptors: consumed ones are relinked at the tail, and the
-          // DMA reads ahead, so a few would leave it no room (it stops when full).
-          let buf = esp_hal::dma_rx_stream_buffer!(16_000, 1_000);
-          let input = audio::I2sIn::new(rx, buf, ${var:i2s}.rate, ${var:i2s}.instance).ok_or(InitError::Config)?;
+          let input = audio::I2sIn::new(rx, ${buffer:i2s-rx}, ${var:i2s}.rate, ${var:i2s}.instance).ok_or(InitError::Config)?;
           audio::Es7210::new(RefCellDevice::new(${bus}), ${const:ADDR}, input).ok().map(AnyMicrophone::${variant})
       }
     init-for:

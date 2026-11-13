@@ -74,7 +74,6 @@ mod prelude {
     pub use embedded_hal_bus::i2c::RefCellDevice;
     pub use esp_hal::{
         delay::Delay,
-        dma::DmaTxBuf,
         gpio::{Input, InputConfig, Level, Output, OutputConfig, Pull},
         i2c::master::{Config as I2cConfig, I2c},
         i2s::master::{Channels, DataFormat, I2s, TdmConfig},
@@ -88,8 +87,8 @@ mod prelude {
     pub use kumiki_mpu6886::Mpu6886;
     pub use static_cell::StaticCell;
     pub use super::super::{
-        audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, ButtonInputs,
-        boot_info, Devices, I2cBus, InitError, SharedI2c,
+        audio, bind, chips, probe, AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, BufferNeeds,
+        Buffers, ButtonInputs, boot_info, Devices, I2cBus, InitError, SharedI2c,
     };
 }
 
@@ -471,6 +470,26 @@ impl BoardId {
 /// Some `board-*` feature pins the candidate set.
 const ANY_PINNED: bool = cfg!(any(feature = "board-m5stack-cores3-stackchan", feature = "board-m5stack-cores3", feature = "board-m5stack-atoms3", feature = "board-m5stack-stopwatch"));
 
+/// Buffers board `id` takes from `Buffers` (default sizes, doc/15 §1).
+pub const fn buffer_needs(id: BoardId) -> prelude::BufferNeeds {
+    match id {
+        BoardId::M5StackCoreS3Stackchan => cores3_stackchan::BUFFERS,
+        BoardId::M5StackCoreS3 => cores3::BUFFERS,
+        BoardId::M5StackAtomS3 => atoms3::BUFFERS,
+        BoardId::M5StackStopWatch => stopwatch::BUFFERS,
+    }
+}
+
+/// The largest buffers any detection candidate takes.
+pub const MAX_BUFFERS: prelude::BufferNeeds = {
+    let m = prelude::BufferNeeds::NONE;
+    let m = if cores3_stackchan::CANDIDATE { m.max(cores3_stackchan::BUFFERS) } else { m };
+    let m = if cores3::CANDIDATE { m.max(cores3::BUFFERS) } else { m };
+    let m = if atoms3::CANDIDATE { m.max(atoms3::BUFFERS) } else { m };
+    let m = if stopwatch::CANDIDATE { m.max(stopwatch::BUFFERS) } else { m };
+    m
+};
+
 /// Detect the board. `octal_psram`: the chip embeds octal PSRAM (GPIO33..37 are
 /// taken); `psram`: any PSRAM. Peripherals are only borrowed.
 pub fn detect(p: &mut Peripherals, octal_psram: bool, psram: bool) -> Result<BoardId, DetectLog> {
@@ -652,6 +671,8 @@ pub mod cores3_stackchan {
     pub const WAKEUP_SOURCES: &[super::WakeupSource] = &[];
     /// How the board switches itself off (DT `system-power-controller` / `gpio-poweroff`).
     pub const POWER_OFF: Option<super::PowerOff> = Some(super::PowerOff::Pmic { node: "pmic" });
+    /// Buffers the board's devices take from `Buffers` (default sizes, doc/15 §1).
+    pub const BUFFERS: BufferNeeds = BufferNeeds { display: 16384, i2s_tx: (16000, 4000), i2s_rx: (16000, 1000) };
 
     /// Use counts of the board's regulators (DT `regulators`), shared by their `Rail` handles.
     pub mod rails {
@@ -889,7 +910,7 @@ pub mod cores3_stackchan {
     /// Bring the board up in `INIT_ORDER` (generated from the binding templates).
     #[inline(never)]
     #[allow(unused_variables, unused_mut, unused_braces, clippy::let_unit_value)]
-    pub fn init(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devices, InitError> {
+    pub fn init(p: Peripherals, mut bufs: Buffers) -> Result<Devices, InitError> {
         let mut pins = take_pins_cores3_stackchan!(p);
         let mut delay = Delay::new();
         // Read before anything else runs (doc/13 §4.4).
@@ -945,6 +966,7 @@ pub mod cores3_stackchan {
                 .with_dma(p.DMA_CH0);
             let dc = Output::new(pins.lcd_dc, Level::High, OutputConfig::default());
             let cs = Output::new(pins.spi2_cs, Level::High, OutputConfig::default());
+            let (buf_a, buf_b) = bufs.display.take().ok_or(InitError::MissingBuffer("display"))?;
             let bus = EspSpiDmaBus::new(spi, dc, Some(cs), buf_a, buf_b).with_fifo(SpiHost::Spi2);
             let mut panel = DcsPanel::new(bus, kumiki_gfx_panels::Ili9342c, bind::dcs_config(lcd::WIDTH, lcd::HEIGHT, lcd::OFFSET, lcd::INVERT, lcd::RGB_ORDER), None::<NoPin>);
             panel.init(&mut delay).map_err(|_| InitError::Display)?;
@@ -968,17 +990,13 @@ pub mod cores3_stackchan {
         // /soc/i2c@60013000/amplifier@36 (awinic,aw88298)
         let mut speaker = {
             let tx = i2s1.tx.take().ok_or(InitError::Config)?;
-            let buf = esp_hal::dma_tx_stream_buffer!(16_000, 4_000);
-            let out = audio::I2sOut::new(tx, buf, i2s1.rate).ok_or(InitError::Config)?;
+            let out = audio::I2sOut::new(tx, bufs.i2s_tx.take().ok_or(InitError::MissingBuffer("i2s-tx"))?, i2s1.rate).ok_or(InitError::Config)?;
             audio::Aw88298::new(RefCellDevice::new(i2c0), speaker::ADDR, out).ok().map(AnySpeaker::Aw88298)
         };
         // /soc/i2c@60013000/adc@40 (everest,es7210)
         let mut microphone = {
             let rx = i2s1.rx.take().ok_or(InitError::Config)?;
-            // Many small descriptors: consumed ones are relinked at the tail, and the
-            // DMA reads ahead, so a few would leave it no room (it stops when full).
-            let buf = esp_hal::dma_rx_stream_buffer!(16_000, 1_000);
-            let input = audio::I2sIn::new(rx, buf, i2s1.rate, i2s1.instance).ok_or(InitError::Config)?;
+            let input = audio::I2sIn::new(rx, bufs.i2s_rx.take().ok_or(InitError::MissingBuffer("i2s-rx"))?, i2s1.rate, i2s1.instance).ok_or(InitError::Config)?;
             audio::Es7210::new(RefCellDevice::new(i2c0), microphone::ADDR, input).ok().map(AnyMicrophone::Es7210)
         };
         // /soc/serial@60010000 (espressif,esp32-uart)
@@ -1132,6 +1150,8 @@ pub mod cores3 {
     pub const WAKEUP_SOURCES: &[super::WakeupSource] = &[];
     /// How the board switches itself off (DT `system-power-controller` / `gpio-poweroff`).
     pub const POWER_OFF: Option<super::PowerOff> = Some(super::PowerOff::Pmic { node: "pmic" });
+    /// Buffers the board's devices take from `Buffers` (default sizes, doc/15 §1).
+    pub const BUFFERS: BufferNeeds = BufferNeeds { display: 16384, i2s_tx: (16000, 4000), i2s_rx: (16000, 1000) };
 
     /// Use counts of the board's regulators (DT `regulators`), shared by their `Rail` handles.
     pub mod rails {
@@ -1295,7 +1315,7 @@ pub mod cores3 {
     /// Bring the board up in `INIT_ORDER` (generated from the binding templates).
     #[inline(never)]
     #[allow(unused_variables, unused_mut, unused_braces, clippy::let_unit_value)]
-    pub fn init(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devices, InitError> {
+    pub fn init(p: Peripherals, mut bufs: Buffers) -> Result<Devices, InitError> {
         let mut pins = take_pins_cores3!(p);
         let mut delay = Delay::new();
         // Read before anything else runs (doc/13 §4.4).
@@ -1344,6 +1364,7 @@ pub mod cores3 {
                 .with_dma(p.DMA_CH0);
             let dc = Output::new(pins.lcd_dc, Level::High, OutputConfig::default());
             let cs = Output::new(pins.spi2_cs, Level::High, OutputConfig::default());
+            let (buf_a, buf_b) = bufs.display.take().ok_or(InitError::MissingBuffer("display"))?;
             let bus = EspSpiDmaBus::new(spi, dc, Some(cs), buf_a, buf_b).with_fifo(SpiHost::Spi2);
             let mut panel = DcsPanel::new(bus, kumiki_gfx_panels::Ili9342c, bind::dcs_config(lcd::WIDTH, lcd::HEIGHT, lcd::OFFSET, lcd::INVERT, lcd::RGB_ORDER), None::<NoPin>);
             panel.init(&mut delay).map_err(|_| InitError::Display)?;
@@ -1367,17 +1388,13 @@ pub mod cores3 {
         // /soc/i2c@60013000/amplifier@36 (awinic,aw88298)
         let mut speaker = {
             let tx = i2s1.tx.take().ok_or(InitError::Config)?;
-            let buf = esp_hal::dma_tx_stream_buffer!(16_000, 4_000);
-            let out = audio::I2sOut::new(tx, buf, i2s1.rate).ok_or(InitError::Config)?;
+            let out = audio::I2sOut::new(tx, bufs.i2s_tx.take().ok_or(InitError::MissingBuffer("i2s-tx"))?, i2s1.rate).ok_or(InitError::Config)?;
             audio::Aw88298::new(RefCellDevice::new(i2c0), speaker::ADDR, out).ok().map(AnySpeaker::Aw88298)
         };
         // /soc/i2c@60013000/adc@40 (everest,es7210)
         let mut microphone = {
             let rx = i2s1.rx.take().ok_or(InitError::Config)?;
-            // Many small descriptors: consumed ones are relinked at the tail, and the
-            // DMA reads ahead, so a few would leave it no room (it stops when full).
-            let buf = esp_hal::dma_rx_stream_buffer!(16_000, 1_000);
-            let input = audio::I2sIn::new(rx, buf, i2s1.rate, i2s1.instance).ok_or(InitError::Config)?;
+            let input = audio::I2sIn::new(rx, bufs.i2s_rx.take().ok_or(InitError::MissingBuffer("i2s-rx"))?, i2s1.rate, i2s1.instance).ok_or(InitError::Config)?;
             audio::Es7210::new(RefCellDevice::new(i2c0), microphone::ADDR, input).ok().map(AnyMicrophone::Es7210)
         };
         // /backlight (kumiki,regulator-backlight)
@@ -1514,6 +1531,8 @@ pub mod atoms3 {
     pub const WAKEUP_SOURCES: &[super::WakeupSource] = &[super::WakeupSource { node: "buttons.button-a", pin: 41, active_low: true, deep_sleep: false }];
     /// How the board switches itself off (DT `system-power-controller` / `gpio-poweroff`).
     pub const POWER_OFF: Option<super::PowerOff> = None;
+    /// Buffers the board's devices take from `Buffers` (default sizes, doc/15 §1).
+    pub const BUFFERS: BufferNeeds = BufferNeeds { display: 16384, i2s_tx: (0, 0), i2s_rx: (0, 0) };
 
     /// Chip GPIOs used by the board (see `take_pins_atoms3!`).
     pub struct Pins {
@@ -1602,7 +1621,7 @@ pub mod atoms3 {
     /// Bring the board up in `INIT_ORDER` (generated from the binding templates).
     #[inline(never)]
     #[allow(unused_variables, unused_mut, unused_braces, clippy::let_unit_value)]
-    pub fn init(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devices, InitError> {
+    pub fn init(p: Peripherals, mut bufs: Buffers) -> Result<Devices, InitError> {
         let mut pins = take_pins_atoms3!(p);
         let mut delay = Delay::new();
         // Read before anything else runs (doc/13 §4.4).
@@ -1636,6 +1655,7 @@ pub mod atoms3 {
                 .with_dma(p.DMA_CH0);
             let dc = Output::new(pins.lcd_dc, Level::High, OutputConfig::default());
             let cs = Output::new(pins.spi2_cs, Level::High, OutputConfig::default());
+            let (buf_a, buf_b) = bufs.display.take().ok_or(InitError::MissingBuffer("display"))?;
             let bus = EspSpiDmaBus::new(spi, dc, Some(cs), buf_a, buf_b).with_fifo(SpiHost::Spi2);
             let mut panel = DcsPanel::new(bus, kumiki_gfx_panels::Gc9107, bind::dcs_config(lcd::WIDTH, lcd::HEIGHT, lcd::OFFSET, lcd::INVERT, lcd::RGB_ORDER), None::<NoPin>);
             panel.init(&mut delay).map_err(|_| InitError::Display)?;
@@ -1772,6 +1792,8 @@ pub mod stopwatch {
     pub const WAKEUP_SOURCES: &[super::WakeupSource] = &[];
     /// How the board switches itself off (DT `system-power-controller` / `gpio-poweroff`).
     pub const POWER_OFF: Option<super::PowerOff> = Some(super::PowerOff::Pmic { node: "pm1" });
+    /// Buffers the board's devices take from `Buffers` (default sizes, doc/15 §1).
+    pub const BUFFERS: BufferNeeds = BufferNeeds { display: 16384, i2s_tx: (0, 0), i2s_rx: (0, 0) };
 
     /// Chip GPIOs used by the board (see `take_pins_stopwatch!`).
     pub struct Pins {
@@ -1911,7 +1933,7 @@ pub mod stopwatch {
     /// Bring the board up in `INIT_ORDER` (generated from the binding templates).
     #[inline(never)]
     #[allow(unused_variables, unused_mut, unused_braces, clippy::let_unit_value)]
-    pub fn init(p: Peripherals, buf_a: DmaTxBuf, buf_b: DmaTxBuf) -> Result<Devices, InitError> {
+    pub fn init(p: Peripherals, mut bufs: Buffers) -> Result<Devices, InitError> {
         let mut pins = take_pins_stopwatch!(p);
         let mut delay = Delay::new();
         // Read before anything else runs (doc/13 §4.4).
@@ -1975,6 +1997,7 @@ pub mod stopwatch {
                 .with_sio2(pins.spi2_sio2)
                 .with_sio3(pins.spi2_sio3)
                 .with_dma(p.DMA_CH0);
+            let (buf_a, buf_b) = bufs.display.take().ok_or(InitError::MissingBuffer("display"))?;
             let bus = EspQspiDmaBus::new(spi, buf_a, buf_b);
             let mut panel = DcsPanel::new(bus, kumiki_gfx_panels::Co5300, bind::dcs_config(lcd::WIDTH, lcd::HEIGHT, lcd::OFFSET, lcd::INVERT, lcd::RGB_ORDER), None::<NoPin>);
             panel.init(&mut delay).map_err(|_| InitError::Display)?;
@@ -2090,12 +2113,14 @@ pub mod stopwatch {
     }
 }
 
-/// Bring up the detected board.
-pub fn init_board(id: BoardId, p: Peripherals, buf_a: prelude::DmaTxBuf, buf_b: prelude::DmaTxBuf) -> Result<prelude::Devices, prelude::InitError> {
+/// Bring up the detected board. Only detection candidates are linked in (a
+/// `board-*` feature leaves the other boards' bring-up out of the binary).
+pub fn init_board(id: BoardId, p: Peripherals, bufs: prelude::Buffers) -> Result<prelude::Devices, prelude::InitError> {
     match id {
-        BoardId::M5StackCoreS3Stackchan => cores3_stackchan::init(p, buf_a, buf_b),
-        BoardId::M5StackCoreS3 => cores3::init(p, buf_a, buf_b),
-        BoardId::M5StackAtomS3 => atoms3::init(p, buf_a, buf_b),
-        BoardId::M5StackStopWatch => stopwatch::init(p, buf_a, buf_b),
+        BoardId::M5StackCoreS3Stackchan if cores3_stackchan::CANDIDATE => cores3_stackchan::init(p, bufs),
+        BoardId::M5StackCoreS3 if cores3::CANDIDATE => cores3::init(p, bufs),
+        BoardId::M5StackAtomS3 if atoms3::CANDIDATE => atoms3::init(p, bufs),
+        BoardId::M5StackStopWatch if stopwatch::CANDIDATE => stopwatch::init(p, bufs),
+        id => Err(prelude::InitError::NotCandidate(id)),
     }
 }

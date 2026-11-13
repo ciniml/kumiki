@@ -654,9 +654,11 @@ pub mod tab5 {
     }
 }
 
-/// Bring up the detected board.
+/// Bring up the detected board. Only detection candidates are linked in (a
+/// `board-*` feature leaves the other boards' bring-up out of the binary).
 pub fn init_board(id: BoardId, p: Peripherals, psram: (usize, usize)) -> Result<prelude::Devices, prelude::InitError> {
     match id {
-        BoardId::M5StackTab5 => tab5::init(p, psram),
+        BoardId::M5StackTab5 if tab5::CANDIDATE => tab5::init(p, psram),
+        id => Err(prelude::InitError::NotCandidate(id)),
     }
 }

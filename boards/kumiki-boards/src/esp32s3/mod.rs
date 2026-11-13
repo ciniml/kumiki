@@ -23,7 +23,13 @@ pub mod chips;
 pub mod probe;
 
 use embedded_hal_bus::i2c::RefCellDevice;
-use esp_hal::{Blocking, dma_tx_buffer, gpio::Input, i2c::master::I2c, peripherals::Peripherals};
+use esp_hal::{
+    Blocking,
+    dma::{DmaRxStreamBuf, DmaTxBuf, DmaTxStreamBuf},
+    gpio::Input,
+    i2c::master::I2c,
+    peripherals::Peripherals,
+};
 use kumiki_class::{ButtonId, TouchPoint};
 use kumiki_gfx::Display;
 use kumiki_gfx_bus_esp::{EspQspiDmaBus, EspSpiDmaBus};
@@ -32,7 +38,7 @@ use kumiki_gfx_panels::{Co5300, DcsPanel, Gc9107, Ili9342c};
 pub use any::{AnyAsyncDisplay, AnyError};
 pub use generated::{
     AnyBacklight, AnyDisplay, AnyImu, AnyMicrophone, AnyPower, AnyRtc, AnySpeaker, AnyTouch, BoardId, DetectLog, Extras, Free,
-    Spare,
+    MAX_BUFFERS, Spare, buffer_needs,
 };
 
 /// Push-pull output (e.g. a GPIO backlight).
@@ -68,12 +74,59 @@ pub type Co5300AsyncDisplay = Display<DcsPanel<EspQspiDmaBus<'static, esp_hal::A
 pub enum InitError {
     /// No candidate board matched; what each probe read.
     UnknownBoard(DetectLog),
+    /// The board is not a detection candidate of this build (`board-*` features).
+    NotCandidate(BoardId),
+    /// A device needs a buffer the caller did not supply in [`Buffers`].
+    MissingBuffer(&'static str),
     /// A peripheral could not be configured.
     Config,
     /// I²C failure during bring-up.
     I2c(esp_hal::i2c::master::Error),
     /// Panel initialization failed.
     Display,
+}
+
+/// Buffer sizes a board's devices take from [`Buffers`] (generated from the
+/// bindings' `kumiki.buffers`; doc/15 §1). Zero: not used.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct BufferNeeds {
+    /// Bytes of each of the panel bus's two DMA buffers.
+    pub display: usize,
+    /// I²S transmit ring: (bytes, bytes per descriptor).
+    pub i2s_tx: (usize, usize),
+    /// I²S receive ring: (bytes, bytes per descriptor).
+    pub i2s_rx: (usize, usize),
+}
+
+impl BufferNeeds {
+    /// No buffers.
+    pub const NONE: Self = Self { display: 0, i2s_tx: (0, 0), i2s_rx: (0, 0) };
+
+    /// Element-wise larger of the two.
+    pub const fn max(self, o: Self) -> Self {
+        const fn m(a: usize, b: usize) -> usize {
+            if a > b { a } else { b }
+        }
+        Self {
+            display: m(self.display, o.display),
+            i2s_tx: (m(self.i2s_tx.0, o.i2s_tx.0), m(self.i2s_tx.1, o.i2s_tx.1)),
+            i2s_rx: (m(self.i2s_rx.0, o.i2s_rx.0), m(self.i2s_rx.1, o.i2s_rx.1)),
+        }
+    }
+}
+
+/// DMA buffers handed to [`init_with`]: in internal RAM, `'static`. Give the
+/// ones [`buffer_needs`] lists for the board (others are not used). Sizes
+/// may differ from the defaults: smaller display buffers work, more slowly;
+/// a ring needs at least 4 descriptors.
+#[derive(Default)]
+pub struct Buffers {
+    /// The panel bus's two DMA buffers.
+    pub display: Option<(DmaTxBuf, DmaTxBuf)>,
+    /// I²S transmit ring (speaker).
+    pub i2s_tx: Option<DmaTxStreamBuf>,
+    /// I²S receive ring (microphone).
+    pub i2s_rx: Option<DmaRxStreamBuf>,
 }
 
 /// Raw button sources of the detected board.
@@ -173,20 +226,54 @@ pub fn boot_info() -> kumiki_class::BootInfo {
     BootInfo { reset: crate::espressif::reset_reason(code), wake }
 }
 
-/// Detect the board and bring every device up. Call once, after `esp_hal::init`.
-///
-/// Allocate large buffers (frame buffers, sprites) before starting Wi-Fi.
-pub fn init(mut p: Peripherals) -> Result<Devices, InitError> {
-    // PSRAM_CAP: 0 = none, 2 = 2 MB quad; other values are embedded octal PSRAM.
+/// (any PSRAM, embedded octal PSRAM) from eFuse PSRAM_CAP: 0 = none,
+/// 2 = 2 MB quad; other values are embedded octal PSRAM.
+fn psram_cap() -> (bool, bool) {
     let cap: u8 = esp_hal::efuse::read_field_le(esp_hal::efuse::PSRAM_CAP);
-    let (psram, octal_psram) = (cap != 0, cap != 0 && cap != 2);
-    let board = generated::detect(&mut p, octal_psram, psram).map_err(InitError::UnknownBoard)?;
-    // One pair of DMA buffers for whichever display the board has.
-    let buf_a = dma_tx_buffer!(16384).map_err(|_| InitError::Config)?;
-    let buf_b = dma_tx_buffer!(16384).map_err(|_| InitError::Config)?;
-    let mut dev = generated::init_board(board, p, buf_a, buf_b)?;
-    if octal_psram {
+    (cap != 0, cap != 0 && cap != 2)
+}
+
+/// Detect the board. `Peripherals` are only borrowed, so an unknown board
+/// leaves them all to the application.
+pub fn detect(p: &mut Peripherals) -> Result<BoardId, InitError> {
+    let (psram, octal_psram) = psram_cap();
+    generated::detect(p, octal_psram, psram).map_err(InitError::UnknownBoard)
+}
+
+/// Bring up `board` (from [`detect`]) with the caller's DMA buffers
+/// ([`buffer_needs`] lists what it takes). Call once, after `esp_hal::init`.
+pub fn init_with(p: Peripherals, board: BoardId, bufs: Buffers) -> Result<Devices, InitError> {
+    let mut dev = generated::init_board(board, p, bufs)?;
+    if psram_cap().1 {
         dev.free.withhold_octal_psram_pins();
     }
     Ok(dev)
+}
+
+/// Detect the board and bring every device up, with DMA buffers kumiki
+/// keeps in `static`s: one set, as large as the largest detection candidate
+/// needs ([`MAX_BUFFERS`]). Call once, after `esp_hal::init`.
+///
+/// To size or place the buffers yourself, use [`detect`] + [`init_with`]
+/// (or `kumiki-boards-alloc`). Allocate large buffers (frame buffers,
+/// sprites) before starting Wi-Fi.
+pub fn init(mut p: Peripherals) -> Result<Devices, InitError> {
+    const fn chunk(n: usize) -> usize {
+        if n == 0 { 1 } else { n }
+    }
+    let board = detect(&mut p)?;
+    let need = buffer_needs(board);
+    let mut bufs = Buffers::default();
+    if need.display > 0 {
+        let a = esp_hal::dma_tx_buffer!(MAX_BUFFERS.display).map_err(|_| InitError::Config)?;
+        let b = esp_hal::dma_tx_buffer!(MAX_BUFFERS.display).map_err(|_| InitError::Config)?;
+        bufs.display = Some((a, b));
+    }
+    if need.i2s_tx.0 > 0 {
+        bufs.i2s_tx = Some(esp_hal::dma_tx_stream_buffer!(MAX_BUFFERS.i2s_tx.0, chunk(MAX_BUFFERS.i2s_tx.1)));
+    }
+    if need.i2s_rx.0 > 0 {
+        bufs.i2s_rx = Some(esp_hal::dma_rx_stream_buffer!(MAX_BUFFERS.i2s_rx.0, chunk(MAX_BUFFERS.i2s_rx.1)));
+    }
+    init_with(p, board, bufs)
 }
