@@ -109,6 +109,19 @@ pub async fn render_loop(mut display: AnyAsyncDisplay, buf: &'static mut [u8]) -
     let style = MonoTextStyle::new(&FONT_6X10, Rgb565::WHITE);
     let r = (w.min(h) / 6).max(8);
     let (mut x, mut y, mut vx, mut vy) = (r, r, 3, 2);
+    // Background: a vertical gradient generated straight into the bus's DMA
+    // buffers (no sprite), over the whole screen.
+    let (sw, sh) = (size.width as usize, size.height as usize);
+    display
+        .write_area_with_async(&embedded_graphics::primitives::Rectangle::new(Point::zero(), size), |first, buf| {
+            for (i, px) in buf.chunks_exact_mut(2).enumerate() {
+                let row = (first + i) / sw;
+                let c = Rgb565::new(0, (row * 32 / sh) as u8, 12);
+                px.copy_from_slice(&c.into_storage().to_be_bytes());
+            }
+        })
+        .await
+        .ok();
     loop {
         spr.clear(Rgb565::new(0, 6, 10)).ok();
         Circle::with_center(Point::new(x, y), (2 * r) as u32)

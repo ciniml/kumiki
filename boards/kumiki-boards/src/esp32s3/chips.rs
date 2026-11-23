@@ -230,38 +230,73 @@ fn update_reg<I: I2c>(i2c: &mut I, addr: u8, reg: u8, clear: u8, set: u8) -> Res
     write_reg(i2c, addr, reg, (v & !clear) | set)
 }
 
-/// StopWatch power-on: PMIC rails, then IO expander (display power, display /
-/// touch reset pulse). Port of M5GFX `pmic_ops::stopwatch_power_on`
-/// (MIT, (c) M5Stack).
-pub fn stopwatch_power_on<I: I2c>(i2c: &mut I, delay: &mut impl embedded_hal::delay::DelayNs) -> Result<(), I::Error> {
-    write_reg(i2c, PM1_ADDR, 0x09, 0x00)?;
-    write_reg(i2c, PM1_ADDR, 0x0A, 0x00)?;
-    update_reg(i2c, PM1_ADDR, 0x06, 0, 0x17)?;
-    // The IO expander boots later than the PMIC: wait up to 500 ms for an ACK.
-    let mut ready = false;
-    for _ in 0..50 {
-        if read_reg(i2c, IOE1_ADDR, 0x00).is_ok() {
-            ready = true;
+/// Which chip of [`stopwatch_power_on`] failed.
+#[derive(Debug)]
+pub enum PowerOnError<E> {
+    /// The M5PM1 PMIC.
+    Pmic(E),
+    /// The M5IOE1 IO expander.
+    IoExpander(E),
+}
+
+/// Run `op` up to 5 times, 10 ms apart: right after a reset the M5PM1 /
+/// M5IOE1 firmware may still be busy and NACK a data byte.
+fn retry<I: I2c>(
+    i2c: &mut I,
+    delay: &mut impl embedded_hal::delay::DelayNs,
+    mut op: impl FnMut(&mut I) -> Result<(), I::Error>,
+) -> Result<(), I::Error> {
+    let mut last = op(i2c);
+    for _ in 1..5 {
+        if last.is_ok() {
             break;
         }
         delay.delay_ms(10);
+        last = op(i2c);
     }
-    if !ready {
-        // Let the next access report the error.
-        read_reg(i2c, IOE1_ADDR, 0x00)?;
+    last
+}
+
+/// Wait up to 500 ms for `addr` to answer a read of `reg`.
+fn wait_ready<I: I2c>(i2c: &mut I, delay: &mut impl embedded_hal::delay::DelayNs, addr: u8, reg: u8) -> Result<(), I::Error> {
+    for _ in 0..50 {
+        if read_reg(i2c, addr, reg).is_ok() {
+            return Ok(());
+        }
+        delay.delay_ms(10);
     }
-    write_reg(i2c, IOE1_ADDR, 0x23, 0x00)?;
-    update_reg(i2c, IOE1_ADDR, 0x13, 0x9D, 0)?;
-    update_reg(i2c, IOE1_ADDR, 0x03, 0, 0x9D)?;
-    update_reg(i2c, IOE1_ADDR, 0x05, 0, 0x99)?;
+    // Let the last access report the error.
+    read_reg(i2c, addr, reg).map(|_| ())
+}
+
+/// StopWatch power-on: PMIC rails, then IO expander (display power, display /
+/// touch reset pulse). Port of M5GFX `pmic_ops::stopwatch_power_on`
+/// (MIT, (c) M5Stack). Each register access is retried (see [`retry`]); the
+/// sequence is idempotent, so a repeated read-modify-write is harmless.
+pub fn stopwatch_power_on<I: I2c>(
+    i2c: &mut I,
+    delay: &mut impl embedded_hal::delay::DelayNs,
+) -> Result<(), PowerOnError<I::Error>> {
+    use PowerOnError::{IoExpander, Pmic};
+    wait_ready(i2c, delay, PM1_ADDR, 0x06).map_err(Pmic)?;
+    retry(i2c, delay, |i| write_reg(i, PM1_ADDR, 0x09, 0x00)).map_err(Pmic)?;
+    retry(i2c, delay, |i| write_reg(i, PM1_ADDR, 0x0A, 0x00)).map_err(Pmic)?;
+    retry(i2c, delay, |i| update_reg(i, PM1_ADDR, 0x06, 0, 0x17)).map_err(Pmic)?;
+    // The IO expander boots later than the PMIC.
+    wait_ready(i2c, delay, IOE1_ADDR, 0x00).map_err(IoExpander)?;
+    let ioe = |i2c: &mut I, delay: &mut _, reg, clear, set| retry(i2c, delay, |i| update_reg(i, IOE1_ADDR, reg, clear, set)).map_err(IoExpander);
+    retry(i2c, delay, |i| write_reg(i, IOE1_ADDR, 0x23, 0x00)).map_err(IoExpander)?;
+    ioe(i2c, delay, 0x13, 0x9D, 0)?;
+    ioe(i2c, delay, 0x03, 0, 0x9D)?;
+    ioe(i2c, delay, 0x05, 0, 0x99)?;
     delay.delay_ms(10);
-    update_reg(i2c, IOE1_ADDR, 0x05, 0x18, 0)?; // reset pulse (display / touch)
+    ioe(i2c, delay, 0x05, 0x18, 0)?; // reset pulse (display / touch)
     delay.delay_ms(8);
-    update_reg(i2c, IOE1_ADDR, 0x05, 0, 0x18)?;
+    ioe(i2c, delay, 0x05, 0, 0x18)?;
     delay.delay_ms(2);
-    update_reg(i2c, IOE1_ADDR, 0x14, 0x02, 0)?;
-    update_reg(i2c, IOE1_ADDR, 0x04, 0, 0x02)?;
-    update_reg(i2c, IOE1_ADDR, 0x06, 0x02, 0)
+    ioe(i2c, delay, 0x14, 0x02, 0)?;
+    ioe(i2c, delay, 0x04, 0, 0x02)?;
+    ioe(i2c, delay, 0x06, 0x02, 0)
 }
 
 // ---- CST820 ------------------------------------------------------------------

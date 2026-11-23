@@ -944,12 +944,12 @@ pub mod cores3_stackchan {
         };
         // /soc/i2c@60013000/pmic@34 (x-powers,axp2101)
         let mut pmic = {
-            chips::axp2101_init(&mut RefCellDevice::new(i2c0), pmic::ADDR, &[(chips::AxpLdo::Aldo1, 1800), (chips::AxpLdo::Aldo2, 3300), (chips::AxpLdo::Aldo3, 3300), (chips::AxpLdo::Aldo4, 3300), (chips::AxpLdo::Bldo1, 0), (chips::AxpLdo::Bldo2, 0)]).map_err(InitError::I2c)?;
+            chips::axp2101_init(&mut RefCellDevice::new(i2c0), pmic::ADDR, &[(chips::AxpLdo::Aldo1, 1800), (chips::AxpLdo::Aldo2, 3300), (chips::AxpLdo::Aldo3, 3300), (chips::AxpLdo::Aldo4, 3300), (chips::AxpLdo::Bldo1, 0), (chips::AxpLdo::Bldo2, 0)]).map_err(|e| InitError::I2c("pmic", e))?;
             delay.delay_millis(10);
             AnyPower::Axp2101(chips::Axp2101Power(RefCellDevice::new(i2c0)))
         };
         // /soc/i2c@60013000/gpio@58 (awinic,aw9523b)
-        let mut ioexp = chips::aw9523_init(&mut RefCellDevice::new(i2c0), ioexp::ADDR, ioexp::P0_PUSH_PULL, &[(0, chips::LineInit::OutputHigh), (1, chips::LineInit::OutputHigh), (2, chips::LineInit::OutputHigh), (5, chips::LineInit::OutputLow), (6, chips::LineInit::OutputLow), (7, chips::LineInit::OutputLow), (8, chips::LineInit::OutputHigh), (9, chips::LineInit::OutputHigh), (12, chips::LineInit::OutputLow), (13, chips::LineInit::OutputHigh), (14, chips::LineInit::OutputLow), (15, chips::LineInit::OutputLow)]).map_err(InitError::I2c)?;
+        let mut ioexp = chips::aw9523_init(&mut RefCellDevice::new(i2c0), ioexp::ADDR, ioexp::P0_PUSH_PULL, &[(0, chips::LineInit::OutputHigh), (1, chips::LineInit::OutputHigh), (2, chips::LineInit::OutputHigh), (5, chips::LineInit::OutputLow), (6, chips::LineInit::OutputLow), (7, chips::LineInit::OutputLow), (8, chips::LineInit::OutputHigh), (9, chips::LineInit::OutputHigh), (12, chips::LineInit::OutputLow), (13, chips::LineInit::OutputHigh), (14, chips::LineInit::OutputLow), (15, chips::LineInit::OutputLow)]).map_err(|e| InitError::I2c("ioexp", e))?;
         // /soc/i2c@60013000/touchscreen@38 (focaltech,ft6336u)
         let mut touch = AnyTouch::Ft6336(chips::Ft6336 { i2c: RefCellDevice::new(i2c0) });
         // /soc/i2c@60013000/imu@69 (bosch,bmi270)
@@ -963,7 +963,7 @@ pub mod cores3_stackchan {
             r.init().ok().map(|_| AnyRtc::Pcf8563(r))
         };
         // /soc/i2c@60013000/gpio@6f (m5stack,py32-io)
-        let mut base_io = chips::py32_init(RefCellDevice::new(i2c0), base_io::ADDR, base_io::LEDS, &[(0, chips::LineInit::OutputLow), (13, chips::LineInit::OutputLow)]).map_err(InitError::I2c)?;
+        let mut base_io = chips::py32_init(RefCellDevice::new(i2c0), base_io::ADDR, base_io::LEDS, &[(0, chips::LineInit::OutputLow), (13, chips::LineInit::OutputLow)]).map_err(|e| InitError::I2c("base_io", e))?;
         // /soc/i2c@60013000/power-monitor@41 (ti,ina226)
         let mut battery = {
             let mut m = kumiki_ina226::Ina226::new(RefCellDevice::new(i2c0), battery::ADDR, battery::SHUNT_RESISTOR.unwrap_or(1000));
@@ -1365,12 +1365,12 @@ pub mod cores3 {
         };
         // /soc/i2c@60013000/pmic@34 (x-powers,axp2101)
         let mut pmic = {
-            chips::axp2101_init(&mut RefCellDevice::new(i2c0), pmic::ADDR, &[(chips::AxpLdo::Aldo1, 1800), (chips::AxpLdo::Aldo2, 3300), (chips::AxpLdo::Aldo3, 3300), (chips::AxpLdo::Aldo4, 3300), (chips::AxpLdo::Bldo1, 0), (chips::AxpLdo::Bldo2, 0)]).map_err(InitError::I2c)?;
+            chips::axp2101_init(&mut RefCellDevice::new(i2c0), pmic::ADDR, &[(chips::AxpLdo::Aldo1, 1800), (chips::AxpLdo::Aldo2, 3300), (chips::AxpLdo::Aldo3, 3300), (chips::AxpLdo::Aldo4, 3300), (chips::AxpLdo::Bldo1, 0), (chips::AxpLdo::Bldo2, 0)]).map_err(|e| InitError::I2c("pmic", e))?;
             delay.delay_millis(10);
             AnyPower::Axp2101(chips::Axp2101Power(RefCellDevice::new(i2c0)))
         };
         // /soc/i2c@60013000/gpio@58 (awinic,aw9523b)
-        let mut ioexp = chips::aw9523_init(&mut RefCellDevice::new(i2c0), ioexp::ADDR, ioexp::P0_PUSH_PULL, &[(0, chips::LineInit::OutputHigh), (1, chips::LineInit::OutputHigh), (2, chips::LineInit::OutputHigh), (5, chips::LineInit::OutputLow), (6, chips::LineInit::OutputLow), (7, chips::LineInit::OutputLow), (8, chips::LineInit::OutputHigh), (9, chips::LineInit::OutputHigh), (12, chips::LineInit::OutputLow), (13, chips::LineInit::OutputHigh), (14, chips::LineInit::OutputLow), (15, chips::LineInit::OutputLow)]).map_err(InitError::I2c)?;
+        let mut ioexp = chips::aw9523_init(&mut RefCellDevice::new(i2c0), ioexp::ADDR, ioexp::P0_PUSH_PULL, &[(0, chips::LineInit::OutputHigh), (1, chips::LineInit::OutputHigh), (2, chips::LineInit::OutputHigh), (5, chips::LineInit::OutputLow), (6, chips::LineInit::OutputLow), (7, chips::LineInit::OutputLow), (8, chips::LineInit::OutputHigh), (9, chips::LineInit::OutputHigh), (12, chips::LineInit::OutputLow), (13, chips::LineInit::OutputHigh), (14, chips::LineInit::OutputLow), (15, chips::LineInit::OutputLow)]).map_err(|e| InitError::I2c("ioexp", e))?;
         // /soc/i2c@60013000/touchscreen@38 (focaltech,ft6336u)
         let mut touch = AnyTouch::Ft6336(chips::Ft6336 { i2c: RefCellDevice::new(i2c0) });
         // /soc/i2c@60013000/imu@69 (bosch,bmi270)
@@ -2011,7 +2011,10 @@ pub mod stopwatch {
         // /power-sequence (m5stack,stopwatch-power-sequence)
         let mut power_seq = {
             let _cs = Output::new(pins.spi2_cs.reborrow(), Level::High, OutputConfig::default());
-            chips::stopwatch_power_on(&mut RefCellDevice::new(i2c1), &mut delay).map_err(InitError::I2c)?;
+            chips::stopwatch_power_on(&mut RefCellDevice::new(i2c1), &mut delay).map_err(|e| match e {
+                chips::PowerOnError::Pmic(e) => InitError::I2c("pm1", e),
+                chips::PowerOnError::IoExpander(e) => InitError::I2c("ioe1", e),
+            })?;
         };
         // probe group `touch`: first candidate that answers (retried for slow starters)
         let touch_group = {

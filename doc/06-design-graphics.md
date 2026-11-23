@@ -226,6 +226,9 @@ pub trait FastDraw: DrawTarget {
   | `clear` | 全画面の `fill_rect` |
 
   - 回転とオフセットは Panel 側で吸収する。クリッピングは Surface 側で一度だけ行う。
+  - `write_area_with(area, |first, buf| …)`（async 版は `write_area_with_async`）：画素をその場で作って、バスの DMA バッファへ直接書く。フレームバッファもスプライトも通さない。`first` は、`buf` の先頭の画素が領域の中で何番目か（行優先、パネルに合わせて切り取ったあとの領域で数える）。`buf` は行の途中で終わることがある。DMA のバスでは、前の区切りを送っている間に `fill` が走る。
+    - kumiki-boards の `AnyDisplay` / `AnyAsyncDisplay` にも同じ名前で置いた。ボードの種類で分岐せずに使える。StopWatch（CO5300）では、x と幅を偶数にする必要がある。また PSRAM のフレームバッファを通らないので、重なる場所に描いたあとで `flush` すると、古いフレームバッファの中身で上書きされる。
+    - m5stopwatch-sphere-display では、この書き方（当時は CO5300 のパネルを直接操作していた）で、フレームバッファと `flush` を通す描き方の 19 fps が約 28 fps になった。
 - `Sprite<F, B: AsMut<[F::Raw]>>`
   - RAM 上の描画面で、`DrawTarget` と `FastDraw` を実装する（塗りつぶしは行の複製、転送は `copy_from_slice`）。
   - `push_to(&mut impl FastDraw, pos, transparent: Option<F::Raw>)`、`push_affine(..., angle, zoom)`、`push_palette(..)` を持つ。

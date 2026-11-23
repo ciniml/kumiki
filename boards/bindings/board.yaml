@@ -54,7 +54,10 @@
     init: |
       {
           let _cs = Output::new(${pinref:@hold-cs.cs-gpios}, Level::High, OutputConfig::default());
-          chips::stopwatch_power_on(&mut RefCellDevice::new(${busof:pmic}), &mut delay).map_err(InitError::I2c)?;
+          chips::stopwatch_power_on(&mut RefCellDevice::new(${busof:pmic}), &mut delay).map_err(|e| match e {
+              chips::PowerOnError::Pmic(e) => InitError::I2c("${var:pmic}", e),
+              chips::PowerOnError::IoExpander(e) => InitError::I2c("${var:io-expander}", e),
+          })?;
       }
   properties:
     pmic: { type: phandle, required: true }

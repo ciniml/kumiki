@@ -11,7 +11,7 @@
     class: power
     init: |
       {
-          chips::axp2101_init(&mut RefCellDevice::new(${bus}), ${const:ADDR}, ${regulators}).map_err(InitError::I2c)?;
+          chips::axp2101_init(&mut RefCellDevice::new(${bus}), ${const:ADDR}, ${regulators}).map_err(|e| InitError::I2c("${label}", e))?;
           delay.delay_millis(10);
           AnyPower::${variant}(chips::Axp2101Power(RefCellDevice::new(${bus})))
       }
@@ -30,7 +30,7 @@
     bus: i2c
     class: gpio-expander
     init: |
-      chips::aw9523_init(&mut RefCellDevice::new(${bus}), ${const:ADDR}, ${const:P0_PUSH_PULL}, ${lines}).map_err(InitError::I2c)?
+      chips::aw9523_init(&mut RefCellDevice::new(${bus}), ${const:ADDR}, ${const:P0_PUSH_PULL}, ${lines}).map_err(|e| InitError::I2c("${label}", e))?
     gpio-pin: "chips::Aw9523Pin { i2c: RefCellDevice::new(${bus}), addr: ${const:ADDR}, line: ${line} }"
   properties:
     reg: { type: int, required: true }
@@ -66,7 +66,7 @@
     bus: i2c
     class: gpio-expander
     init: |
-      chips::py32_init(RefCellDevice::new(${bus}), ${const:ADDR}, ${const:LEDS}, ${lines}).map_err(InitError::I2c)?
+      chips::py32_init(RefCellDevice::new(${bus}), ${const:ADDR}, ${const:LEDS}, ${lines}).map_err(|e| InitError::I2c("${label}", e))?
     type: "kumiki_py32::Py32<SharedI2c>"
     gpio-pin: "kumiki_py32::Py32Pin::new(RefCellDevice::new(${bus}), ${const:ADDR}, ${line})"
     gpio-pin-type: "kumiki_py32::Py32Pin<SharedI2c>"

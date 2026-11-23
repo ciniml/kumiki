@@ -423,3 +423,30 @@ fn fb_display_copy_within_overlapping() {
     }
     assert_eq!(p.hw_copies, 1);
 }
+
+#[test]
+fn write_area_with_streams_generated_pixels() {
+    // 5×3 area; chunk_cap = 7 px, so chunks end mid-row and `first` must carry over.
+    let mut d = Display::new(MockPanel::new(8, 6));
+    let area = Rectangle::new(Point::new(2, 1), Size::new(5, 3));
+    let mut calls = 0;
+    d.write_area_with(&area, |first, buf| {
+        calls += 1;
+        for (i, px) in buf.chunks_exact_mut(2).enumerate() {
+            let n = first + i;
+            let c = if (n % 5 + n / 5) % 2 == 0 { Rgb565::RED } else { Rgb565::BLUE };
+            Rgb565Be::encode(c, px);
+        }
+    })
+    .unwrap();
+    assert!(calls > 1, "several chunks");
+    let p = d.panel();
+    for y in 0..3 {
+        for x in 0..5 {
+            let want = if (x + y) % 2 == 0 { Rgb565::RED } else { Rgb565::BLUE };
+            assert_eq!(p.px(2 + x, 1 + y), want, "({x}, {y})");
+        }
+    }
+    assert_eq!(p.px(1, 1), Rgb565::BLACK);
+    assert_eq!(p.windows, 1);
+}

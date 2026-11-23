@@ -70,6 +70,25 @@ impl<P: WindowPanel> Display<P> {
         self.panel.begin_write(&area)?;
         self.panel.bus().write_data(&buf[..len * P::Format::BYTES])
     }
+
+    /// Stream the pixels of `area` straight to the panel, generated on the fly:
+    /// no frame buffer, no sprite. `fill(first, buf)` must fill `buf` with
+    /// encoded pixels (`P::Format`, `BYTES` each) starting at pixel `first` of
+    /// the area, row-major; `buf` may end mid-row. With a DMA bus, `fill` runs
+    /// while the previous chunk is on the wire.
+    ///
+    /// `area` is clipped to the panel first, and `first` counts pixels of the
+    /// clipped area, so pass an area inside the panel to keep the two aligned.
+    pub fn write_area_with<F: FnMut(usize, &mut [u8])>(&mut self, area: &Rectangle, mut fill: F) -> Result<(), BusError<P>> {
+        let Some(c) = clip(area, self.panel.size()) else { return Ok(()) };
+        self.panel.begin_write(&c.dst)?;
+        let total = (c.dst.size.width * c.dst.size.height) as usize * P::Format::BYTES;
+        let mut first = 0;
+        self.panel.bus().write_with(total, P::Format::BYTES, |buf| {
+            fill(first, buf);
+            first += buf.len() / P::Format::BYTES;
+        })
+    }
 }
 
 impl<P: WindowPanel> DrawTarget for Display<P> {
@@ -193,5 +212,27 @@ impl<P: AsyncWindowPanel> AsyncFastDraw for Display<P> {
         let total = (c.dst.size.width * c.dst.size.height) as usize * P::Format::BYTES;
         let mut stream = BlitStream::<S, P::Format>::new(src, stride_px, &c);
         self.panel.bus().write_with(total, P::Format::BYTES, |buf| stream.fill(buf)).await
+    }
+}
+
+impl<P: AsyncWindowPanel> Display<P> {
+    /// `async` flavour of the blocking `write_area_with`: `fill` runs while the
+    /// previous chunk is on the bus.
+    pub async fn write_area_with_async<F: FnMut(usize, &mut [u8])>(
+        &mut self,
+        area: &Rectangle,
+        mut fill: F,
+    ) -> Result<(), AsyncBusError<P>> {
+        let Some(c) = clip(area, self.panel.size()) else { return Ok(()) };
+        self.panel.begin_write(&c.dst).await?;
+        let total = (c.dst.size.width * c.dst.size.height) as usize * P::Format::BYTES;
+        let mut first = 0;
+        self.panel
+            .bus()
+            .write_with(total, P::Format::BYTES, |buf| {
+                fill(first, buf);
+                first += buf.len() / P::Format::BYTES;
+            })
+            .await
     }
 }

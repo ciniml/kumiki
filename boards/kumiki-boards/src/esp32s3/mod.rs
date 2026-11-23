@@ -80,8 +80,8 @@ pub enum InitError {
     MissingBuffer(&'static str),
     /// A peripheral could not be configured.
     Config,
-    /// I²C failure during bring-up.
-    I2c(esp_hal::i2c::master::Error),
+    /// I²C failure during bring-up: the device (its DT label) and the error.
+    I2c(&'static str, esp_hal::i2c::master::Error),
     /// Panel initialization failed.
     Display,
 }
